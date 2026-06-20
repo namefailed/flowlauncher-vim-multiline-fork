@@ -180,3 +180,27 @@ Before Phase 1 begins, these need answers:
 - **Based on**: `namefailed/flowlauncher-vim-fork` @ `vim-mode` branch
 - **Working branch**: `multiline-editor`
 - **Upstream remote**: `upstream-vim` → `https://github.com/namefailed/flowlauncher-vim-fork.git`
+- **Origin / releases**: `https://github.com/namefailed/flowlauncher-vim-multiline-fork` (auto-built installers on the Releases page)
+
+---
+
+## Implementation Status
+
+**Done**
+- Toggle: open Flow, press **`Ctrl+Enter`** to enter/leave the editor.
+- Editor UI: fixed-size box, line-number gutter, full-width themed mode line (mode pill + Ln/Col + char count). Flow's clock/search-icon/placeholder are hidden while editing; content is clamped (scrolls inside the box, never spills into results).
+- Motions: `h l w W b B e E % f/F/t/T ; ,`, and line-aware `0 ^ $ j k gg G` (in both Normal and Visual).
+- Operators: `x X s S r ~ p u Ctrl+R`, char/word `d c y` + text objects, line-wise `dd cc yy` and **`dj dk yj yk cj ck`**.
+- Visual + **Visual Line** (line-wise: `V` selects the line, `j`/`k` extend by line, `d/y/c/x/~` act on whole lines).
+- Result navigation moves to **`Ctrl+J` / `Ctrl+K`** in the editor.
+- **`Ctrl+Shift+E`** hands the buffer off to the OS text editor.
+- Buffer persists across hide/show while the editor is on; leaving the editor clears it.
+
+**Decisions (from Open Questions)**
+1. Plugins kept. 2. Result nav → `Ctrl+J`/`Ctrl+K`. 3. In-window toggle (`Ctrl+Enter`), not a separate hotkey. 4. Persist while editor is on; clear on exit.
+
+**Remaining / optional**
+- `dj`/`dk` etc. are linewise; full Vim linewise paste/`p` of line registers is not modelled.
+- External-editor handoff is one-way (no read-back) and manual (`Ctrl+Shift+E`), not auto-on-overflow.
+- `:` ex-command mode (`:w`, `:q`, `:set nu`), a resize grip, and a monospace editor font (Plan 1.3 / 3.3 / 4) are not implemented.
+- File I/O (Q5) and a separate settings page (Q6) — not implemented.

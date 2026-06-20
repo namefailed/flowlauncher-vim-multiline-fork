@@ -495,6 +495,15 @@ namespace Flow.Launcher.VimMode
                 return true;
             }
 
+            // Ctrl+Shift+E in the editor: hand the buffer off to the OS text editor (for content
+            // that has outgrown the box).
+            if (_multiLineMode && modifiers.HasFlag(ModifierKeys.Control) && modifiers.HasFlag(ModifierKeys.Shift) && e.Key == Key.E)
+            {
+                OpenInExternalEditor();
+                e.Handled = true;
+                return true;
+            }
+
             if (modifiers.HasFlag(ModifierKeys.Control) && e.Key == Key.R && _vimEngine.CurrentMode == VimModeType.Normal)
             {
                 VimRedo();
@@ -629,13 +638,17 @@ namespace Flow.Launcher.VimMode
                     switch (e.Key)
                     {
                         case Key.J:
-                            if (_multiLineMode)
+                            if (_multiLineMode && IsLineOperatorPending())
+                                ApplyLinewiseOperator(down: true);
+                            else if (_multiLineMode)
                                 ExecuteMotion(ApplyCountMove(i => VimMotionEngine.MoveDown(_queryTextBox.Text, i)));
                             else
                                 _viewModel.SelectNextItemCommand.Execute(null);
                             return true;
                         case Key.K:
-                            if (_multiLineMode)
+                            if (_multiLineMode && IsLineOperatorPending())
+                                ApplyLinewiseOperator(down: false);
+                            else if (_multiLineMode)
                                 ExecuteMotion(ApplyCountMove(i => VimMotionEngine.MoveUp(_queryTextBox.Text, i)));
                             else
                                 _viewModel.SelectPrevItemCommand.Execute(null);
@@ -1080,23 +1093,27 @@ namespace Flow.Launcher.VimMode
                             return true;
                         case Key.X:
                         case Key.D:
-                            SetClipboardText(_queryTextBox.Text);
-                            SetText("");
-                            _queryTextBox.CaretIndex = 0;
-                            _vimEngine.SwitchToNormal();
-                            return true;
-                        case Key.Y:
-                            SetClipboardText(_queryTextBox.Text);
-                            _queryTextBox.CaretIndex = 0;
-                            _queryTextBox.SelectionLength = 0;
-                            _vimEngine.SwitchToNormal();
-                            return true;
                         case Key.C:
                         case Key.S:
-                            SetClipboardText(_queryTextBox.Text);
-                            SetText("");
-                            _queryTextBox.CaretIndex = 0;
-                            _vimEngine.SwitchToInsert();
+                            {
+                                var (s, en) = VisualLineRange();
+                                if (en > s) SetClipboardText(_queryTextBox.Text.Substring(s, en - s));
+                                SetText(_queryTextBox.Text.Remove(s, en - s));
+                                _queryTextBox.CaretIndex = Math.Min(s, _queryTextBox.Text.Length);
+                                if (e.Key == Key.C || e.Key == Key.S)
+                                    _vimEngine.SwitchToInsert();
+                                else
+                                    _vimEngine.SwitchToNormal();
+                            }
+                            return true;
+                        case Key.Y:
+                            {
+                                var (s, en) = VisualLineRange();
+                                if (en > s) SetClipboardText(_queryTextBox.Text.Substring(s, en - s));
+                                _queryTextBox.CaretIndex = Math.Min(s, _queryTextBox.Text.Length);
+                                _queryTextBox.SelectionLength = 0;
+                                _vimEngine.SwitchToNormal();
+                            }
                             return true;
                         case Key.R:
                             _awaitingCharCommand = "r";
@@ -1104,23 +1121,35 @@ namespace Flow.Launcher.VimMode
                         case Key.OemTilde:
                             if (modifiers.HasFlag(ModifierKeys.Shift))
                             {
-                                if (_queryTextBox.Text.Length > 0)
+                                int ts = _queryTextBox.SelectionStart;
+                                int tlen = _queryTextBox.SelectionLength;
+                                if (tlen > 0)
                                 {
                                     char[] chars = _queryTextBox.Text.ToCharArray();
-                                    for (int i = 0; i < chars.Length; i++)
+                                    for (int i = ts; i < ts + tlen && i < chars.Length; i++)
                                         chars[i] = char.IsUpper(chars[i]) ? char.ToLower(chars[i]) : char.ToUpper(chars[i]);
                                     SetText(new string(chars));
-                                    _queryTextBox.CaretIndex = 0;
-                                    _queryTextBox.SelectionLength = 0;
                                 }
+                                _queryTextBox.CaretIndex = ts;
+                                _queryTextBox.SelectionLength = 0;
                                 _vimEngine.SwitchToNormal();
                             }
                             return true;
                         case Key.J:
-                            _viewModel.SelectNextItemCommand.Execute(null);
+                            if (_multiLineMode)
+                            {
+                                _visualCaret = VimMotionEngine.MoveDown(_queryTextBox.Text, _visualCaret);
+                                UpdateVisualLineSelection();
+                            }
+                            else _viewModel.SelectNextItemCommand.Execute(null);
                             return true;
                         case Key.K:
-                            _viewModel.SelectPrevItemCommand.Execute(null);
+                            if (_multiLineMode)
+                            {
+                                _visualCaret = VimMotionEngine.MoveUp(_queryTextBox.Text, _visualCaret);
+                                UpdateVisualLineSelection();
+                            }
+                            else _viewModel.SelectPrevItemCommand.Execute(null);
                             return true;
                         default:
                             return true;
@@ -1434,6 +1463,55 @@ namespace Flow.Launcher.VimMode
             _vimEngine.SwitchToInsert();
         }
 
+        private bool IsLineOperatorPending() =>
+            _pendingCommand == "d" || _pendingCommand == "c" || _pendingCommand == "y";
+
+        /// <summary>
+        /// Writes the scratchpad to a temp file, opens it in the OS default text editor, then clears
+        /// the editor and hides Flow — for when the note has outgrown the inline box (Ctrl+Shift+E).
+        /// </summary>
+        private void OpenInExternalEditor()
+        {
+            try
+            {
+                string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "flowlauncher-vim-scratch.txt");
+                System.IO.File.WriteAllText(path, _queryTextBox.Text);
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+                SetMultiLineMode(false); // content now lives in the file; leave the inline editor
+                _viewModel.Hide();
+            }
+            catch (Exception ex) { Flow.Launcher.Infrastructure.Logger.Log.Exception("VimManager", "Open in external editor failed", ex); }
+        }
+
+        /// <summary>
+        /// Applies a pending d/c/y operator line-wise over the current line plus <c>count</c> lines
+        /// down (j) or up (k) — i.e. dj/dk/yj/yk/cj/ck operate on whole lines, like Vim.
+        /// </summary>
+        private void ApplyLinewiseOperator(bool down)
+        {
+            string text = _queryTextBox.Text;
+            int caret = _queryTextBox.CaretIndex;
+            int n = GetCount();
+            int target = caret;
+            for (int i = 0; i < n; i++)
+                target = down ? VimMotionEngine.MoveDown(text, target) : VimMotionEngine.MoveUp(text, target);
+
+            var (s, e) = VimMotionEngine.GetLinewiseRange(text, caret, target);
+            if (e > s)
+            {
+                SetClipboardText(text.Substring(s, e - s));
+                if (_pendingCommand != "y")
+                {
+                    SetText(text.Remove(s, e - s));
+                    _queryTextBox.CaretIndex = Math.Min(s, _queryTextBox.Text.Length);
+                }
+            }
+            if (_pendingCommand == "c")
+                _vimEngine.SwitchToInsert();
+            _lastChange = _pendingCommand + "_lines";
+            _pendingCommand = "";
+        }
+
         /// <summary>
         /// Pastes the clipboard text after the cursor (Vim 'p'), <paramref name="count"/> times,
         /// leaving the caret on the last pasted character. Records the change for '.' repeat.
@@ -1615,14 +1693,46 @@ namespace Flow.Launcher.VimMode
 
         private void EnterVisualLineMode()
         {
-            // NOTE: Visual Line currently selects the whole query in both modes. Per-line
-            // Visual Line selection + operators is Plan phase 2.4, handled as a separate step.
             if (_queryTextBox.Text.Length == 0) return;
-            _visualAnchor = 0;
-            _visualCaret = _queryTextBox.Text.Length - 1;
             ResetPendingState();
-            _vimEngine.SwitchToVisualLine();
-            _queryTextBox.Select(0, _queryTextBox.Text.Length);
+            if (_multiLineMode)
+            {
+                // Select the current line; j/k extend by line.
+                _visualAnchor = _queryTextBox.CaretIndex;
+                _visualCaret = _queryTextBox.CaretIndex;
+                _vimEngine.SwitchToVisualLine();
+                UpdateVisualLineSelection();
+            }
+            else
+            {
+                // Single line: the whole query is the line.
+                _visualAnchor = 0;
+                _visualCaret = _queryTextBox.Text.Length - 1;
+                _vimEngine.SwitchToVisualLine();
+                _queryTextBox.Select(0, _queryTextBox.Text.Length);
+                UpdateCaretPosition();
+            }
+        }
+
+        /// <summary>The range a Visual Line operator deletes/yanks: whole lines in multi-line mode
+        /// (with terminators), the whole query in single-line mode.</summary>
+        private (int start, int end) VisualLineRange()
+        {
+            if (_multiLineMode)
+                return VimMotionEngine.GetLinewiseRange(_queryTextBox.Text, _visualAnchor, _visualCaret);
+            return (0, _queryTextBox.Text.Length);
+        }
+
+        /// <summary>Highlights the lines spanned by the Visual Line selection (content only).</summary>
+        private void UpdateVisualLineSelection()
+        {
+            string text = _queryTextBox.Text;
+            int lo = Math.Min(_visualAnchor, _visualCaret);
+            int hi = Math.Max(_visualAnchor, _visualCaret);
+            int start = VimMotionEngine.GetLineStart(text, lo);
+            int end = VimMotionEngine.GetLineEnd(text, hi);
+            if (end < start) end = start;
+            _queryTextBox.Select(start, Math.Max(0, Math.Min(end - start, text.Length - start)));
             UpdateCaretPosition();
         }
 

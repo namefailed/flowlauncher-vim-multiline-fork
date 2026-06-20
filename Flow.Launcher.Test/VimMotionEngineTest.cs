@@ -317,5 +317,18 @@ namespace Flow.Launcher.Test
             Assert.That(VimMotionEngine.LineOperatorRange(Lines, 6, multiLine: true, includeLineBreak: true), Is.EqualTo((5, 10)));
             Assert.That(VimMotionEngine.LineOperatorRange(Lines, 6, multiLine: true, includeLineBreak: false), Is.EqualTo((5, 8)));
         }
+
+        [Test]
+        public void GetLinewiseRangeTest()
+        {
+            // dj from line 0 to line 1 -> both lines incl terminator: "abc\r\ndef\r\n".
+            Assert.That(VimMotionEngine.GetLinewiseRange(Lines, 1, 6), Is.EqualTo((0, 10)));
+            // Order-independent.
+            Assert.That(VimMotionEngine.GetLinewiseRange(Lines, 6, 1), Is.EqualTo((0, 10)));
+            // dk from last line to middle -> spans to end of buffer, consumes the leading terminator.
+            Assert.That(VimMotionEngine.GetLinewiseRange(Lines, 11, 6), Is.EqualTo((3, 14)));
+            // Same line -> just that line.
+            Assert.That(VimMotionEngine.GetLinewiseRange(Lines, 1, 1), Is.EqualTo((0, 5)));
+        }
     }
 }

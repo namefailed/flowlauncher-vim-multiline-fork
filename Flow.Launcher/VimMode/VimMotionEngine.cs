@@ -619,5 +619,25 @@ namespace Flow.Launcher.VimMode
             if (!multiLine) return (0, text.Length);
             return GetLineRange(text, caret, includeLineBreak);
         }
+
+        /// <summary>
+        /// Returns the character range spanning every whole line between the two caret positions
+        /// (inclusive), with line terminators — used for line-wise operators like dj / dk and
+        /// Visual Line. When the span reaches the end of the buffer, the leading terminator is also
+        /// consumed so the delete leaves no dangling blank line.
+        /// </summary>
+        public static (int start, int end) GetLinewiseRange(string text, int a, int b)
+        {
+            int lo = Math.Max(0, Math.Min(a, b));
+            int hi = Math.Max(0, Math.Max(a, b));
+            int start = GetLineStart(text, lo);
+            int end = GetLineRange(text, hi, includeLineBreak: true).end;
+            if (end >= text.Length)
+            {
+                if (start > 0 && text[start - 1] == '\n') start--;
+                if (start > 0 && text[start - 1] == '\r') start--;
+            }
+            return (start, Math.Max(start, end));
+        }
     }
 }
