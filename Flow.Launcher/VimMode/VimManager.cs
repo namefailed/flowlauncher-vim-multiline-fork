@@ -85,15 +85,15 @@ namespace Flow.Launcher.VimMode
                 _queryTextBox.AcceptsReturn = true;
                 _queryTextBox.TextWrapping = TextWrapping.Wrap;
                 _queryTextBox.VerticalContentAlignment = VerticalAlignment.Top;
-                _queryTextBox.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
-                // Fixed editor size (MinHeight overrides the bound single-line Height). Overflow
-                // scrolls for now; handing off to an external editor when content exceeds the box
-                // is a planned option.
+                // Hidden scrollbar (the default one is ugly); content still follows the caret.
+                _queryTextBox.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
+                // Fixed editor size (MinHeight overrides the bound single-line Height). Content past
+                // the box scrolls to follow the caret; outgrowing it -> Ctrl+Shift+E external editor.
                 _queryTextBox.MinHeight = 220;
-                // Clamp the height too, so content past the box scrolls inside it instead of
-                // spilling down over the results list.
                 _queryTextBox.MaxHeight = 220;
-                // Text starts right after the (centered-number) gutter; bottom padding clears the mode line.
+                // Drop the query box's 16px left margin (it reserved space for the search icon) so the
+                // text sits right next to the small gutter; bottom padding clears the mode line.
+                _queryTextBox.Margin = new Thickness(0, 7, 0, 7);
                 _queryTextBox.Padding = new Thickness(GutterWidth, 6, 10, 32);
                 ApplyEditorChrome(true);
                 _vimEngine.SwitchToInsert(); // land in Insert so the user can type immediately
@@ -106,6 +106,7 @@ namespace Flow.Launcher.VimMode
                 _queryTextBox.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
                 _queryTextBox.ClearValue(FrameworkElement.MinHeightProperty);
                 _queryTextBox.ClearValue(FrameworkElement.MaxHeightProperty);
+                _queryTextBox.ClearValue(FrameworkElement.MarginProperty);
                 _queryTextBox.ClearValue(System.Windows.Controls.Control.PaddingProperty);
                 ApplyEditorChrome(false);
                 // Per the persistence rule: the scratchpad only persists while multi-line mode is on.
