@@ -50,6 +50,7 @@ namespace Flow.Launcher.VimMode
         private readonly UIElement _searchIcon;
         private readonly UIElement _placeholderBox;
         private readonly UIElement _suggestionBox;
+        private readonly UIElement _pluginIcon;
         private System.Windows.Controls.ScrollViewer _editorScrollViewer;
         private string _pendingCommand = "";
         private string _awaitingCharCommand = "";
@@ -140,6 +141,7 @@ namespace Flow.Launcher.VimMode
             Toggle(_searchIcon);
             Toggle(_placeholderBox);
             Toggle(_suggestionBox);
+            Toggle(_pluginIcon);
 
             if (_vimLineGutter != null)
                 _vimLineGutter.Visibility = editor ? Visibility.Visible : Visibility.Collapsed;
@@ -308,6 +310,7 @@ namespace Flow.Launcher.VimMode
             _searchIcon = mainWindow.FindName("SearchIcon") as UIElement;
             _placeholderBox = mainWindow.FindName("QueryTextPlaceholderBox") as UIElement;
             _suggestionBox = mainWindow.FindName("QueryTextSuggestionBox") as UIElement;
+            _pluginIcon = mainWindow.FindName("PluginActivationIcon") as UIElement;
             _settings = settings;
 
             _vimEngine = new VimEngine();
@@ -547,6 +550,15 @@ namespace Flow.Launcher.VimMode
             {
                 if (e.Key == Key.J) { _viewModel.SelectNextItemCommand.Execute(null); e.Handled = true; return true; }
                 if (e.Key == Key.K) { _viewModel.SelectPrevItemCommand.Execute(null); e.Handled = true; return true; }
+            }
+
+            // Ctrl+V in the editor: paste with line endings normalized to \n (so CRLF text from other
+            // apps doesn't reintroduce ^M), instead of WPF's default paste.
+            if (_multiLineMode && modifiers.HasFlag(ModifierKeys.Control) && !modifiers.HasFlag(ModifierKeys.Alt) && e.Key == Key.V)
+            {
+                PasteAtCaretNormalized();
+                e.Handled = true;
+                return true;
             }
 
             if (modifiers.HasFlag(ModifierKeys.Control) || modifiers.HasFlag(ModifierKeys.Alt))
@@ -1560,6 +1572,20 @@ namespace Flow.Launcher.VimMode
 
         // The editor keeps the buffer LF-only (\n) so text handed to plugins has Unix line endings.
         private static string NormalizeLf(string s) => s?.Replace("\r\n", "\n").Replace("\r", "\n");
+
+        /// <summary>Ctrl+V in the editor: insert the clipboard at the caret with LF-normalized newlines.</summary>
+        private void PasteAtCaretNormalized()
+        {
+            try
+            {
+                string clip = NormalizeLf(Clipboard.GetText());
+                if (string.IsNullOrEmpty(clip)) return;
+                int c = _queryTextBox.CaretIndex;
+                SetText(_queryTextBox.Text.Insert(c, clip));
+                _queryTextBox.CaretIndex = Math.Min(c + clip.Length, _queryTextBox.Text.Length);
+            }
+            catch (Exception ex) { Flow.Launcher.Infrastructure.Logger.Log.Exception("VimManager", "Ctrl+V paste failed", ex); }
+        }
 
         private void Paste(int count, bool before)
         {
