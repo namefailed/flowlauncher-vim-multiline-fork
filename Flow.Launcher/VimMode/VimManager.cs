@@ -16,8 +16,15 @@ namespace Flow.Launcher.VimMode
         private readonly MainViewModel _viewModel;
         private readonly TextBox _queryTextBox;
 
-        private static void SetClipboardText(string text)
+        // Tracks the last yank/delete so p/P can paste line-wise (yy/dd/Visual Line) vs char-wise.
+        private string _lastYankText;
+        private bool _lastYankLinewise;
+
+        private void SetClipboardText(string text)
         {
+            // Default to char-wise; line-wise sites flip _lastYankLinewise = true afterwards.
+            _lastYankText = text;
+            _lastYankLinewise = false;
             if (!string.IsNullOrEmpty(text))
             {
                 try { Clipboard.SetText(text); } catch (Exception ex) { Flow.Launcher.Infrastructure.Logger.Log.Exception("VimManager", "Clipboard operation failed", ex); }
@@ -86,8 +93,8 @@ namespace Flow.Launcher.VimMode
                 // Clamp the height too, so content past the box scrolls inside it instead of
                 // spilling down over the results list.
                 _queryTextBox.MaxHeight = 220;
-                // Small gap after the gutter; bottom padding keeps text clear of the mode line.
-                _queryTextBox.Padding = new Thickness(GutterWidth + 1, 6, 10, 32);
+                // Text starts right after the (centered-number) gutter; bottom padding clears the mode line.
+                _queryTextBox.Padding = new Thickness(GutterWidth, 6, 10, 32);
                 ApplyEditorChrome(true);
                 _vimEngine.SwitchToInsert(); // land in Insert so the user can type immediately
             }
@@ -111,7 +118,7 @@ namespace Flow.Launcher.VimMode
             RedrawLineNumbers();
         }
 
-        private const double GutterWidth = 22;
+        private const double GutterWidth = 24;
 
         /// <summary>
         /// Hides Flow's single-line search chrome (clock, search icon, placeholder, suggestion) while
@@ -191,8 +198,8 @@ namespace Flow.Launcher.VimMode
                             Text = ln.ToString(),
                             FontSize = 11,
                             Foreground = fg,
-                            TextAlignment = TextAlignment.Right,
-                            Width = GutterWidth - 2
+                            TextAlignment = TextAlignment.Center,
+                            Width = GutterWidth
                         };
                         System.Windows.Controls.Canvas.SetTop(tb, rect.Top + marginTop);
                         System.Windows.Controls.Canvas.SetLeft(tb, 0);
@@ -813,7 +820,10 @@ namespace Flow.Launcher.VimMode
                             return false;
 
                         case Key.P:
-                            PasteAfterCursor(GetCount());
+                            if (modifiers.HasFlag(ModifierKeys.Shift))
+                                PasteBeforeCursor(GetCount()); // P: before cursor / line above
+                            else
+                                PasteAfterCursor(GetCount());  // p: after cursor / line below
                             return true;
                         case Key.U:
                             VimUndo();
@@ -841,6 +851,7 @@ namespace Flow.Launcher.VimMode
                                     _queryTextBox.Text, _queryTextBox.CaretIndex, _multiLineMode, includeLineBreak: cmd != "c");
                                 if (le > ls)
                                     SetClipboardText(_queryTextBox.Text.Substring(ls, le - ls));
+                                _lastYankLinewise = _multiLineMode; // dd/cc/yy is line-wise in the editor
                                 if (cmd == "d" || cmd == "c")
                                 {
                                     SetText(_queryTextBox.Text.Remove(ls, le - ls));
@@ -1098,6 +1109,7 @@ namespace Flow.Launcher.VimMode
                             {
                                 var (s, en) = VisualLineRange();
                                 if (en > s) SetClipboardText(_queryTextBox.Text.Substring(s, en - s));
+                                _lastYankLinewise = _multiLineMode;
                                 SetText(_queryTextBox.Text.Remove(s, en - s));
                                 _queryTextBox.CaretIndex = Math.Min(s, _queryTextBox.Text.Length);
                                 if (e.Key == Key.C || e.Key == Key.S)
@@ -1110,6 +1122,7 @@ namespace Flow.Launcher.VimMode
                             {
                                 var (s, en) = VisualLineRange();
                                 if (en > s) SetClipboardText(_queryTextBox.Text.Substring(s, en - s));
+                                _lastYankLinewise = _multiLineMode;
                                 _queryTextBox.CaretIndex = Math.Min(s, _queryTextBox.Text.Length);
                                 _queryTextBox.SelectionLength = 0;
                                 _vimEngine.SwitchToNormal();
@@ -1500,6 +1513,7 @@ namespace Flow.Launcher.VimMode
             if (e > s)
             {
                 SetClipboardText(text.Substring(s, e - s));
+                _lastYankLinewise = true; // dj/dk/yj/yk/cj/ck are line-wise
                 if (_pendingCommand != "y")
                 {
                     SetText(text.Remove(s, e - s));
@@ -1513,10 +1527,15 @@ namespace Flow.Launcher.VimMode
         }
 
         /// <summary>
-        /// Pastes the clipboard text after the cursor (Vim 'p'), <paramref name="count"/> times,
-        /// leaving the caret on the last pasted character. Records the change for '.' repeat.
+        /// Pastes the clipboard <paramref name="count"/> times. If the last yank/delete was line-wise
+        /// (yy/dd/dj/Visual Line), pastes whole line(s) below (p) or above (P) the current line, like
+        /// Vim; otherwise pastes char-wise after (p) or before (P) the caret. Records '.' repeat.
         /// </summary>
-        private void PasteAfterCursor(int count)
+        private void PasteAfterCursor(int count) => Paste(count, before: false);
+
+        private void PasteBeforeCursor(int count) => Paste(count, before: true);
+
+        private void Paste(int count, bool before)
         {
             try
             {
@@ -1524,13 +1543,35 @@ namespace Flow.Launcher.VimMode
                 if (string.IsNullOrEmpty(clip)) return;
                 if (count < 1) count = 1;
 
-                string pasted = clip;
-                for (int i = 1; i < count; i++) pasted += clip;
+                // Line-wise only when our own line-wise yank still matches the clipboard.
+                bool linewise = _lastYankLinewise && clip == _lastYankText;
+                string text = _queryTextBox.Text;
 
-                int c = _queryTextBox.CaretIndex;
-                if (c < _queryTextBox.Text.Length) c++;
-                SetText(_queryTextBox.Text.Insert(c, pasted));
-                _queryTextBox.CaretIndex = Math.Min(c + pasted.Length - 1, Math.Max(0, _queryTextBox.Text.Length - 1));
+                if (linewise)
+                {
+                    string content = clip.TrimEnd('\r', '\n');
+                    string block = content;
+                    for (int i = 1; i < count; i++) block += "\r\n" + content;
+
+                    int insertPos = before
+                        ? VimMotionEngine.GetLineStart(text, _queryTextBox.CaretIndex)
+                        : VimMotionEngine.GetLineEnd(text, _queryTextBox.CaretIndex);
+
+                    string toInsert = before ? block + "\r\n" : "\r\n" + block;
+                    SetText(text.Insert(insertPos, toInsert));
+                    // Caret on the first pasted line.
+                    _queryTextBox.CaretIndex = before ? insertPos : Math.Min(insertPos + 2, _queryTextBox.Text.Length);
+                }
+                else
+                {
+                    string pasted = clip;
+                    for (int i = 1; i < count; i++) pasted += clip;
+
+                    int c = _queryTextBox.CaretIndex;
+                    if (!before && c < text.Length) c++; // p pastes after the cursor
+                    SetText(text.Insert(c, pasted));
+                    _queryTextBox.CaretIndex = Math.Min(c + pasted.Length - 1, Math.Max(0, _queryTextBox.Text.Length - 1));
+                }
                 _lastChange = "p";
             }
             catch (Exception ex) { Flow.Launcher.Infrastructure.Logger.Log.Exception("VimManager", "Clipboard paste operation failed", ex); }
