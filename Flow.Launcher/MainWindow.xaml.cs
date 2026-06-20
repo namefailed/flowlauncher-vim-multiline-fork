@@ -97,7 +97,7 @@ namespace Flow.Launcher
             InitializeComponent();
             UpdatePosition();
 
-            _vimManager = new Flow.Launcher.VimMode.VimManager(this, _viewModel, QueryTextBox, VimBlockCaret, VimModeIndicator, _settings);
+            _vimManager = new Flow.Launcher.VimMode.VimManager(this, _viewModel, QueryTextBox, VimBlockCaret, VimModeIndicator, VimStatusBarHost, _settings);
 
             SyncSoundEffectsState();
             RegisterSoundEffectsEvent();

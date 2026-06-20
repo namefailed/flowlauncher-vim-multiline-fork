@@ -33,6 +33,8 @@ namespace Flow.Launcher.VimMode
         private readonly VimEngine _vimEngine;
         private readonly System.Windows.Shapes.Rectangle _vimBlockCaret;
         private readonly Border _vimModeIndicator;
+        private readonly Border _vimStatusBarHost;
+        private readonly System.Windows.Controls.TextBlock _vimStatusText;
         private string _pendingCommand = "";
         private string _awaitingCharCommand = "";
         private string _lastFindCmd = "";
@@ -48,17 +50,81 @@ namespace Flow.Launcher.VimMode
         private int _lastChangeLen = 0;   // chars affected by last change (for . repeat)
         private char _lastReplaceChar = '\0'; // char used in last r{char} (for . repeat)
         private bool _multiLineMode;      // true when the query box is the multi-line editor
+        private string _multiLineBuffer = ""; // scratchpad preserved across hide/show while multi-line
         private readonly Flow.Launcher.Infrastructure.UserSettings.Settings _settings;
 
         /// <summary>
-        /// Enables or disables multi-line editor mode. In multi-line mode, j/k move the caret
-        /// between lines (result navigation shifts to Ctrl+J/Ctrl+K) and dd/cc/yy/V act on the
-        /// current line. The UI layer toggles this when the editor mode is activated.
+        /// Enables or disables multi-line editor mode. In multi-line mode the query box becomes a
+        /// multi-line editor: j/k move the caret between lines (result navigation shifts to
+        /// Ctrl+J/Ctrl+K) and dd/cc/yy act on the current line. Leaving multi-line mode clears the
+        /// scratchpad buffer (single-line mode always starts empty).
         /// </summary>
-        public void SetMultiLineMode(bool enabled) => _multiLineMode = enabled;
+        public void SetMultiLineMode(bool enabled)
+        {
+            if (_multiLineMode == enabled) return;
+            _multiLineMode = enabled;
+
+            if (enabled)
+            {
+                _queryTextBox.AcceptsReturn = true;
+                _queryTextBox.TextWrapping = TextWrapping.Wrap;
+                _queryTextBox.VerticalContentAlignment = VerticalAlignment.Top;
+                _queryTextBox.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+                _queryTextBox.MinHeight = 160;
+                _vimEngine.SwitchToInsert(); // land in Insert so the user can type immediately
+            }
+            else
+            {
+                _queryTextBox.AcceptsReturn = false;
+                _queryTextBox.TextWrapping = TextWrapping.NoWrap;
+                _queryTextBox.VerticalContentAlignment = VerticalAlignment.Center;
+                _queryTextBox.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
+                _queryTextBox.ClearValue(FrameworkElement.MinHeightProperty);
+                // Per the persistence rule: the scratchpad only persists while multi-line mode is on.
+                SetText("");
+                _queryTextBox.CaretIndex = 0;
+                _vimEngine.SwitchToInsert();
+            }
+
+            UpdateStatusBar();
+        }
+
+        /// <summary>Toggles multi-line editor mode (bound to Ctrl+Enter).</summary>
+        public void ToggleMultiLineMode() => SetMultiLineMode(!_multiLineMode);
 
         /// <summary>Gets whether multi-line editor mode is currently active.</summary>
         public bool IsMultiLineMode => _multiLineMode;
+
+        /// <summary>
+        /// Refreshes the editor status bar (mode, line/column, character count). Visible only in
+        /// multi-line mode with Vim enabled.
+        /// </summary>
+        private void UpdateStatusBar()
+        {
+            if (_vimStatusBarHost == null) return;
+
+            if (!_multiLineMode || !_settings.EnableVimMode)
+            {
+                _vimStatusBarHost.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            _vimStatusBarHost.Visibility = Visibility.Visible;
+            if (_vimStatusText == null) return;
+
+            string text = _queryTextBox.Text;
+            int caret = _queryTextBox.CaretIndex;
+            int line = VimMotionEngine.GetLineNumber(text, caret) + 1;
+            int col = VimMotionEngine.GetColumn(text, caret) + 1;
+            string mode = _vimEngine.CurrentMode switch
+            {
+                VimModeType.Normal => "NORMAL",
+                VimModeType.Visual => "VISUAL",
+                VimModeType.VisualLine => "V-LINE",
+                _ => "INSERT"
+            };
+            _vimStatusText.Text = $"{mode}  Ln {line}, Col {col}  |  {text.Length} chars";
+        }
 
         // Vim-style operation-level undo/redo stacks
         private readonly System.Collections.Generic.Stack<(string text, int caretIndex)> _undoStack = new();
@@ -104,13 +170,15 @@ namespace Flow.Launcher.VimMode
         /// <summary>
         /// Initializes a new instance of the VimManager class.
         /// </summary>
-        public VimManager(MainWindow mainWindow, MainViewModel viewModel, TextBox queryTextBox, System.Windows.Shapes.Rectangle vimBlockCaret, Border vimModeIndicator, Flow.Launcher.Infrastructure.UserSettings.Settings settings)
+        public VimManager(MainWindow mainWindow, MainViewModel viewModel, TextBox queryTextBox, System.Windows.Shapes.Rectangle vimBlockCaret, Border vimModeIndicator, Border vimStatusBarHost, Flow.Launcher.Infrastructure.UserSettings.Settings settings)
         {
             _mainWindow = mainWindow;
             _viewModel = viewModel;
             _queryTextBox = queryTextBox;
             _vimBlockCaret = vimBlockCaret;
             _vimModeIndicator = vimModeIndicator;
+            _vimStatusBarHost = vimStatusBarHost;
+            _vimStatusText = vimStatusBarHost?.Child as System.Windows.Controls.TextBlock;
             _settings = settings;
 
             _vimEngine = new VimEngine();
@@ -131,6 +199,7 @@ namespace Flow.Launcher.VimMode
             {
                 _mainWindow.Dispatcher.BeginInvoke(new Action(() =>
                 {
+                    SetMultiLineMode(false); // also leave the editor (no-op if not in it)
                     _queryTextBox.SelectionLength = 0;
                     ResetPendingState();
                     _vimEngine.SwitchToInsert();
@@ -174,6 +243,8 @@ namespace Flow.Launcher.VimMode
                 }
                 catch (Exception ex) { Flow.Launcher.Infrastructure.Logger.Log.Exception("VimManager", "Layout exception in UpdateCaretPosition", ex); }
             }
+
+            if (_multiLineMode) UpdateStatusBar();
         }
 
         private void ViewModel_PropertyChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -184,12 +255,24 @@ namespace Flow.Launcher.VimMode
                 {
                     _mainWindow.Dispatcher.BeginInvoke(new Action(() =>
                     {
+                        // Restore the scratchpad if multi-line mode was left on when dismissed.
+                        if (_multiLineMode && !string.IsNullOrEmpty(_multiLineBuffer) && string.IsNullOrEmpty(_queryTextBox.Text))
+                        {
+                            SetText(_multiLineBuffer);
+                            _queryTextBox.CaretIndex = Math.Min(_multiLineBuffer.Length, _queryTextBox.Text.Length);
+                        }
                         if (_vimEngine.CurrentMode != VimModeType.Insert)
                         {
                             _queryTextBox.SelectionLength = 0;
                             _vimEngine.SwitchToInsert();
                         }
+                        UpdateStatusBar();
                     }));
+                }
+                else
+                {
+                    // Hiding: remember the buffer only while multi-line mode stays on.
+                    _multiLineBuffer = _multiLineMode ? _queryTextBox.Text : "";
                 }
             }
         }
@@ -231,6 +314,8 @@ namespace Flow.Launcher.VimMode
                     _ => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.Transparent)
                 };
             }
+
+            UpdateStatusBar();
 
             if (_vimBlockCaret == null) return;
 
@@ -275,6 +360,14 @@ namespace Flow.Launcher.VimMode
             }
 
             var modifiers = e.KeyboardDevice.Modifiers;
+
+            // Ctrl+Enter toggles the multi-line editor (open Flow normally, then drop into the editor).
+            if (modifiers.HasFlag(ModifierKeys.Control) && !modifiers.HasFlag(ModifierKeys.Alt) && e.Key == Key.Enter)
+            {
+                ToggleMultiLineMode();
+                e.Handled = true;
+                return true;
+            }
 
             if (modifiers.HasFlag(ModifierKeys.Control) && e.Key == Key.R && _vimEngine.CurrentMode == VimModeType.Normal)
             {

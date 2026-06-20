@@ -373,6 +373,23 @@
                 Panel.ZIndex="10"
                 IsHitTestVisible="False"
                 Visibility="Collapsed" />
+            <Border
+                x:Name="VimStatusBarHost"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Bottom"
+                Margin="0,0,8,4"
+                CornerRadius="3"
+                Background="#CC1E1E1E"
+                Panel.ZIndex="10"
+                IsHitTestVisible="False"
+                Visibility="Collapsed">
+                <TextBlock
+                    x:Name="VimStatusBar"
+                    Margin="6,1"
+                    FontFamily="Consolas"
+                    FontSize="11"
+                    Foreground="#FFDDDDDD" />
+            </Border>
             </Grid>
 
             <Grid x:Name="MiddleSeparatorArea" ClipToBounds="True">
