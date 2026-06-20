@@ -596,6 +596,19 @@ namespace Flow.Launcher.VimMode
         }
 
         /// <summary>
+        /// Returns the index of the first non-blank character on the line containing
+        /// <paramref name="caret"/> (line-relative '^'), or the line start if the line is all blank.
+        /// </summary>
+        public static int MoveFirstNonBlankOfLine(string text, int caret)
+        {
+            int start = GetLineStart(text, caret);
+            int end = GetLineEnd(text, caret);
+            for (int i = start; i < end; i++)
+                if (!char.IsWhiteSpace(text[i])) return i;
+            return start;
+        }
+
+        /// <summary>
         /// Returns the range a line-wise operator (dd / cc / yy) should act on.
         /// In single-line mode the operator covers the whole query (the historical behaviour);
         /// in multi-line mode it covers the current line, via <see cref="GetLineRange"/>.

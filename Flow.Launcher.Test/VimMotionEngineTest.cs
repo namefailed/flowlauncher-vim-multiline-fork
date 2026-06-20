@@ -300,6 +300,17 @@ namespace Flow.Launcher.Test
         }
 
         [Test]
+        public void MoveFirstNonBlankOfLineTest()
+        {
+            // "  ab\r\ncd": spaces then ab on line 0, cd on line 1.
+            const string t = "  ab\r\ncd";
+            Assert.That(VimMotionEngine.MoveFirstNonBlankOfLine(t, 0), Is.EqualTo(2)); // line 0 -> 'a'
+            Assert.That(VimMotionEngine.MoveFirstNonBlankOfLine(t, 6), Is.EqualTo(6)); // line 1 -> 'c'
+            // All-blank line returns its start.
+            Assert.That(VimMotionEngine.MoveFirstNonBlankOfLine("  \r\nx", 0), Is.EqualTo(0));
+        }
+
+        [Test]
         public void LineOperatorRange_MultiLineMode_CoversCurrentLine()
         {
             // Multi-line mode: dd/yy include the line break, cc covers content only.

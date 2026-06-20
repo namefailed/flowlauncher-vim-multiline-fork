@@ -140,8 +140,10 @@ namespace Flow.Launcher.VimMode
             if (_editorScrollViewer != null) return;
             _editorScrollViewer = FindDescendantScrollViewer(_queryTextBox);
             if (_editorScrollViewer != null)
-                _editorScrollViewer.ScrollChanged += (s, e) => RedrawLineNumbers();
+                _editorScrollViewer.ScrollChanged += OnEditorScrolled;
         }
+
+        private void OnEditorScrolled(object sender, System.Windows.Controls.ScrollChangedEventArgs e) => RedrawLineNumbers();
 
         private static System.Windows.Controls.ScrollViewer FindDescendantScrollViewer(DependencyObject root)
         {
@@ -679,19 +681,25 @@ namespace Flow.Launcher.VimMode
                             return true;
                         case Key.D0:
                             if (modifiers.HasFlag(ModifierKeys.Shift)) return false; // Handle ')' normally or ignore
-                            ExecuteMotion(VimMotionEngine.MoveStartOfLine());
+                            ExecuteMotion(_multiLineMode
+                                ? VimMotionEngine.GetLineStart(_queryTextBox.Text, _queryTextBox.CaretIndex)
+                                : VimMotionEngine.MoveStartOfLine());
                             return true;
                         case Key.D6:
                             if (modifiers.HasFlag(ModifierKeys.Shift)) // ^
                             {
-                                ExecuteMotion(VimMotionEngine.MoveFirstNonBlank(_queryTextBox.Text));
+                                ExecuteMotion(_multiLineMode
+                                    ? VimMotionEngine.MoveFirstNonBlankOfLine(_queryTextBox.Text, _queryTextBox.CaretIndex)
+                                    : VimMotionEngine.MoveFirstNonBlank(_queryTextBox.Text));
                                 return true;
                             }
                             return false;
                         case Key.D4:
                             if (modifiers.HasFlag(ModifierKeys.Shift)) // $
                             {
-                                ExecuteMotion(VimMotionEngine.MoveEndOfLine(_queryTextBox.Text.Length));
+                                ExecuteMotion(_multiLineMode
+                                    ? VimMotionEngine.GetLineEnd(_queryTextBox.Text, _queryTextBox.CaretIndex)
+                                    : VimMotionEngine.MoveEndOfLine(_queryTextBox.Text.Length));
                                 return true;
                             }
                             return false;
@@ -746,11 +754,16 @@ namespace Flow.Launcher.VimMode
                             }
                             return true;
                         case Key.S:
-                            if (modifiers.HasFlag(ModifierKeys.Shift)) // S -> cc (substitute entire line)
+                            if (modifiers.HasFlag(ModifierKeys.Shift)) // S -> cc (substitute line)
                             {
-                                _queryTextBox.CaretIndex = 0;
+                                // Multi-line: substitute the current line; single-line: the whole query.
+                                _queryTextBox.CaretIndex = _multiLineMode
+                                    ? VimMotionEngine.GetLineStart(_queryTextBox.Text, _queryTextBox.CaretIndex)
+                                    : 0;
                                 _pendingCommand = "c";
-                                ExecuteMotion(VimMotionEngine.MoveEndOfLine(_queryTextBox.Text.Length));
+                                ExecuteMotion(_multiLineMode
+                                    ? VimMotionEngine.GetLineEnd(_queryTextBox.Text, _queryTextBox.CaretIndex)
+                                    : VimMotionEngine.MoveEndOfLine(_queryTextBox.Text.Length));
                             }
                             else // s -> cl
                             {
@@ -919,7 +932,9 @@ namespace Flow.Launcher.VimMode
                             return true;
                         case Key.D0:
                             if (modifiers.HasFlag(ModifierKeys.Shift)) return true;
-                            ExecuteVisualMotion(VimMotionEngine.MoveStartOfLine());
+                            ExecuteVisualMotion(_multiLineMode
+                                ? VimMotionEngine.GetLineStart(_queryTextBox.Text, _visualCaret)
+                                : VimMotionEngine.MoveStartOfLine());
                             return true;
                         case Key.D5 when modifiers.HasFlag(ModifierKeys.Shift):
                             ExecuteVisualMotion(VimMotionEngine.MoveToMatchingBracket(_queryTextBox.Text, _visualCaret));
@@ -927,14 +942,18 @@ namespace Flow.Launcher.VimMode
                         case Key.D6:
                             if (modifiers.HasFlag(ModifierKeys.Shift))
                             {
-                                ExecuteVisualMotion(VimMotionEngine.MoveFirstNonBlank(_queryTextBox.Text));
+                                ExecuteVisualMotion(_multiLineMode
+                                    ? VimMotionEngine.MoveFirstNonBlankOfLine(_queryTextBox.Text, _visualCaret)
+                                    : VimMotionEngine.MoveFirstNonBlank(_queryTextBox.Text));
                                 return true;
                             }
                             return true;
                         case Key.D4:
                             if (modifiers.HasFlag(ModifierKeys.Shift))
                             {
-                                ExecuteVisualMotion(VimMotionEngine.MoveEndOfLine(_queryTextBox.Text.Length));
+                                ExecuteVisualMotion(_multiLineMode
+                                    ? VimMotionEngine.GetLineEnd(_queryTextBox.Text, _visualCaret)
+                                    : VimMotionEngine.MoveEndOfLine(_queryTextBox.Text.Length));
                                 return true;
                             }
                             return true;
@@ -1025,10 +1044,16 @@ namespace Flow.Launcher.VimMode
                             }
                             return true;
                         case Key.J:
-                            _viewModel.SelectNextItemCommand.Execute(null);
+                            if (_multiLineMode)
+                                ExecuteVisualMotion(VimMotionEngine.MoveDown(_queryTextBox.Text, _visualCaret));
+                            else
+                                _viewModel.SelectNextItemCommand.Execute(null);
                             return true;
                         case Key.K:
-                            _viewModel.SelectPrevItemCommand.Execute(null);
+                            if (_multiLineMode)
+                                ExecuteVisualMotion(VimMotionEngine.MoveUp(_queryTextBox.Text, _visualCaret));
+                            else
+                                _viewModel.SelectPrevItemCommand.Execute(null);
                             return true;
                         default:
                             return true;
@@ -1714,6 +1739,8 @@ namespace Flow.Launcher.VimMode
                     _queryTextBox.PreviewTextInput -= QueryTextBox_PreviewTextInput;
                     _queryTextBox.SelectionChanged -= QueryTextBox_SelectionChanged;
                     _queryTextBox.TextChanged -= QueryTextBox_TextChanged;
+                    if (_editorScrollViewer != null)
+                        _editorScrollViewer.ScrollChanged -= OnEditorScrolled;
                 }
 
                 _disposed = true;
