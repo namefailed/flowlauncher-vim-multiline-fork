@@ -353,7 +353,7 @@
             <Canvas x:Name="VimLineGutter"
                     HorizontalAlignment="Left"
                     VerticalAlignment="Stretch"
-                    Width="26"
+                    Width="22"
                     Background="Transparent"
                     Panel.ZIndex="9"
                     IsHitTestVisible="False"

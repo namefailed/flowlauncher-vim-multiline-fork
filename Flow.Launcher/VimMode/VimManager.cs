@@ -83,8 +83,11 @@ namespace Flow.Launcher.VimMode
                 // scrolls for now; handing off to an external editor when content exceeds the box
                 // is a planned option.
                 _queryTextBox.MinHeight = 220;
-                // Leave room on the left for the line-number gutter and at the bottom for the mode line.
-                _queryTextBox.Padding = new Thickness(GutterWidth + 4, 6, 10, 26);
+                // Clamp the height too, so content past the box scrolls inside it instead of
+                // spilling down over the results list.
+                _queryTextBox.MaxHeight = 220;
+                // Small gap after the gutter; bottom padding keeps text clear of the mode line.
+                _queryTextBox.Padding = new Thickness(GutterWidth + 1, 6, 10, 32);
                 ApplyEditorChrome(true);
                 _vimEngine.SwitchToInsert(); // land in Insert so the user can type immediately
             }
@@ -95,6 +98,7 @@ namespace Flow.Launcher.VimMode
                 _queryTextBox.VerticalContentAlignment = VerticalAlignment.Center;
                 _queryTextBox.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
                 _queryTextBox.ClearValue(FrameworkElement.MinHeightProperty);
+                _queryTextBox.ClearValue(FrameworkElement.MaxHeightProperty);
                 _queryTextBox.ClearValue(System.Windows.Controls.Control.PaddingProperty);
                 ApplyEditorChrome(false);
                 // Per the persistence rule: the scratchpad only persists while multi-line mode is on.
@@ -107,7 +111,7 @@ namespace Flow.Launcher.VimMode
             RedrawLineNumbers();
         }
 
-        private const double GutterWidth = 26;
+        private const double GutterWidth = 22;
 
         /// <summary>
         /// Hides Flow's single-line search chrome (clock, search icon, placeholder, suggestion) while
@@ -188,7 +192,7 @@ namespace Flow.Launcher.VimMode
                             FontSize = 11,
                             Foreground = fg,
                             TextAlignment = TextAlignment.Right,
-                            Width = GutterWidth - 6
+                            Width = GutterWidth - 2
                         };
                         System.Windows.Controls.Canvas.SetTop(tb, rect.Top + marginTop);
                         System.Windows.Controls.Canvas.SetLeft(tb, 0);
