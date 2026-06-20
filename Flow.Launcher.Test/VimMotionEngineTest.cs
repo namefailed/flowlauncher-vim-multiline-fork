@@ -207,5 +207,71 @@ namespace Flow.Launcher.Test
             // No matching bracket (target == caret): empty range, nothing deleted.
             Assert.That(VimMotionEngine.OperatorRange(3, 3, MotionInclusivity.InclusivePair, 10), Is.EqualTo((3, 3)));
         }
+
+        // ── Multi-line helpers ──
+        // "abc\r\ndef\r\nghij": a0 b1 c2 \r3 \n4 d5 e6 f7 \r8 \n9 g10 h11 i12 j13  (len 14)
+        private const string Lines = "abc\r\ndef\r\nghij";
+
+        [Test]
+        public void GetLineNumberTest()
+        {
+            Assert.That(VimMotionEngine.GetLineNumber(Lines, 0), Is.EqualTo(0));
+            Assert.That(VimMotionEngine.GetLineNumber(Lines, 2), Is.EqualTo(0));
+            Assert.That(VimMotionEngine.GetLineNumber(Lines, 5), Is.EqualTo(1));
+            Assert.That(VimMotionEngine.GetLineNumber(Lines, 9), Is.EqualTo(1));
+            Assert.That(VimMotionEngine.GetLineNumber(Lines, 10), Is.EqualTo(2));
+            Assert.That(VimMotionEngine.GetLineNumber(Lines, 13), Is.EqualTo(2));
+            Assert.That(VimMotionEngine.GetLineNumber("", 0), Is.EqualTo(0));
+        }
+
+        [Test]
+        public void GetLineStartTest()
+        {
+            Assert.That(VimMotionEngine.GetLineStart(Lines, 2), Is.EqualTo(0));
+            Assert.That(VimMotionEngine.GetLineStart(Lines, 6), Is.EqualTo(5));
+            Assert.That(VimMotionEngine.GetLineStart(Lines, 13), Is.EqualTo(10));
+        }
+
+        [Test]
+        public void GetLineEndTest()
+        {
+            // Content end excludes the CRLF terminator.
+            Assert.That(VimMotionEngine.GetLineEnd(Lines, 1), Is.EqualTo(3));
+            Assert.That(VimMotionEngine.GetLineEnd(Lines, 6), Is.EqualTo(8));
+            // Final line has no terminator -> end is text length.
+            Assert.That(VimMotionEngine.GetLineEnd(Lines, 12), Is.EqualTo(14));
+            // No newlines at all -> whole string is one line.
+            Assert.That(VimMotionEngine.GetLineEnd("hello", 2), Is.EqualTo(5));
+        }
+
+        [Test]
+        public void GetColumnTest()
+        {
+            Assert.That(VimMotionEngine.GetColumn(Lines, 5), Is.EqualTo(0));
+            Assert.That(VimMotionEngine.GetColumn(Lines, 6), Is.EqualTo(1));
+            Assert.That(VimMotionEngine.GetColumn(Lines, 13), Is.EqualTo(3));
+        }
+
+        [Test]
+        public void MoveDownPreservesColumn()
+        {
+            Assert.That(VimMotionEngine.MoveDown(Lines, 1), Is.EqualTo(6));   // col1 line0 -> col1 line1
+            Assert.That(VimMotionEngine.MoveDown(Lines, 6), Is.EqualTo(11));  // col1 line1 -> col1 line2
+            Assert.That(VimMotionEngine.MoveDown(Lines, 10), Is.EqualTo(10)); // last line -> unchanged
+            // Column clamps to a shorter line below ("abcdef\r\ngh").
+            Assert.That(VimMotionEngine.MoveDown("abcdef\r\ngh", 4), Is.EqualTo(10));
+            // No newlines -> no line below.
+            Assert.That(VimMotionEngine.MoveDown("hello", 2), Is.EqualTo(2));
+        }
+
+        [Test]
+        public void MoveUpPreservesColumn()
+        {
+            Assert.That(VimMotionEngine.MoveUp(Lines, 11), Is.EqualTo(6));   // col1 line2 -> col1 line1
+            Assert.That(VimMotionEngine.MoveUp(Lines, 1), Is.EqualTo(1));    // first line -> unchanged
+            // Column clamps to a shorter line above ("ab\r\ncdef").
+            Assert.That(VimMotionEngine.MoveUp("ab\r\ncdef", 7), Is.EqualTo(2));
+            Assert.That(VimMotionEngine.MoveUp("hello", 2), Is.EqualTo(2));
+        }
     }
 }

@@ -479,5 +479,92 @@ namespace Flow.Launcher.VimMode
             if (index == -1) return caret;
             return till ? index + 1 : index;
         }
+
+        // ─── Multi-line helpers ──────────────────────────────────────────────
+        // These treat '\n' as the line separator and tolerate a preceding '\r'
+        // (WPF multi-line TextBoxes use "\r\n"). A "column" is the offset of the
+        // caret from the start of its line, measured in raw string characters.
+
+        /// <summary>
+        /// Returns the zero-based line number containing the given caret index.
+        /// </summary>
+        public static int GetLineNumber(string text, int caret)
+        {
+            if (text.Length == 0) return 0;
+            caret = Math.Clamp(caret, 0, text.Length);
+            int line = 0;
+            for (int i = 0; i < caret; i++)
+                if (text[i] == '\n') line++;
+            return line;
+        }
+
+        /// <summary>
+        /// Returns the caret index of the first character of the line containing <paramref name="caret"/>.
+        /// </summary>
+        public static int GetLineStart(string text, int caret)
+        {
+            caret = Math.Clamp(caret, 0, text.Length);
+            int i = caret;
+            while (i > 0 && text[i - 1] != '\n') i--;
+            return i;
+        }
+
+        /// <summary>
+        /// Returns the caret index just past the last content character of the line containing
+        /// <paramref name="caret"/> — i.e., the position of the line's terminator ('\r' or '\n'),
+        /// or the text length for the final line. This is the line-aware analogue of "$".
+        /// </summary>
+        public static int GetLineEnd(string text, int caret)
+        {
+            caret = Math.Clamp(caret, 0, text.Length);
+            int i = caret;
+            while (i < text.Length && text[i] != '\n') i++;
+            // i now sits on the line's '\n' or at text length; exclude a preceding '\r' (CRLF).
+            if (i > 0 && text[i - 1] == '\r') return i - 1;
+            return i;
+        }
+
+        /// <summary>
+        /// Returns the caret's column: its character offset from the start of its line.
+        /// </summary>
+        public static int GetColumn(string text, int caret)
+        {
+            return Math.Clamp(caret, 0, text.Length) - GetLineStart(text, caret);
+        }
+
+        /// <summary>
+        /// Moves the caret one line down, preserving the column where possible (j). Returns the
+        /// original index when already on the last line.
+        /// </summary>
+        public static int MoveDown(string text, int caret)
+        {
+            caret = Math.Clamp(caret, 0, text.Length);
+            int col = GetColumn(text, caret);
+
+            // Find the start of the next line (char after the next '\n').
+            int nl = caret;
+            while (nl < text.Length && text[nl] != '\n') nl++;
+            if (nl >= text.Length) return caret; // no line below
+
+            int nextStart = nl + 1;
+            int nextEnd = GetLineEnd(text, nextStart);
+            return Math.Min(nextStart + col, nextEnd);
+        }
+
+        /// <summary>
+        /// Moves the caret one line up, preserving the column where possible (k). Returns the
+        /// original index when already on the first line.
+        /// </summary>
+        public static int MoveUp(string text, int caret)
+        {
+            caret = Math.Clamp(caret, 0, text.Length);
+            int col = GetColumn(text, caret);
+            int lineStart = GetLineStart(text, caret);
+            if (lineStart == 0) return caret; // no line above
+
+            int prevStart = GetLineStart(text, lineStart - 1);
+            int prevEnd = GetLineEnd(text, lineStart - 1);
+            return Math.Min(prevStart + col, prevEnd);
+        }
     }
 }
