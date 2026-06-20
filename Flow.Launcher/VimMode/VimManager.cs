@@ -513,11 +513,23 @@ namespace Flow.Launcher.VimMode
             }
 
             // In the editor, Enter while NOT in Insert mode (i.e. Esc'd to Normal/Visual) sends the
-            // whole multi-line buffer to the selected result/plugin. In Insert mode Enter is a newline.
+            // whole multi-line buffer to the selected result/plugin.
             if (_multiLineMode && e.Key == Key.Enter && modifiers == ModifierKeys.None
                 && _vimEngine.CurrentMode != VimModeType.Insert)
             {
                 _viewModel.OpenResultCommand.Execute(null);
+                e.Handled = true;
+                return true;
+            }
+
+            // In Insert mode, Enter inserts a bare line feed (\n) rather than WPF's default \r\n, so the
+            // text handed to plugins uses Unix line endings (no ^M in editors like Emacs).
+            if (_multiLineMode && e.Key == Key.Enter && _vimEngine.CurrentMode == VimModeType.Insert
+                && !modifiers.HasFlag(ModifierKeys.Control) && !modifiers.HasFlag(ModifierKeys.Alt))
+            {
+                int c = _queryTextBox.CaretIndex;
+                SetText(_queryTextBox.Text.Insert(c, "\n"));
+                _queryTextBox.CaretIndex = Math.Min(c + 1, _queryTextBox.Text.Length);
                 e.Handled = true;
                 return true;
             }
@@ -1475,13 +1487,13 @@ namespace Flow.Launcher.VimMode
             if (below)
             {
                 int insertPos = VimMotionEngine.GetLineEnd(text, caret);
-                SetText(text.Insert(insertPos, "\r\n"));
-                _queryTextBox.CaretIndex = Math.Min(insertPos + 2, _queryTextBox.Text.Length);
+                SetText(text.Insert(insertPos, "\n"));
+                _queryTextBox.CaretIndex = Math.Min(insertPos + 1, _queryTextBox.Text.Length);
             }
             else
             {
                 int insertPos = VimMotionEngine.GetLineStart(text, caret);
-                SetText(text.Insert(insertPos, "\r\n"));
+                SetText(text.Insert(insertPos, "\n"));
                 _queryTextBox.CaretIndex = insertPos;
             }
             _vimEngine.SwitchToInsert();
@@ -1546,32 +1558,36 @@ namespace Flow.Launcher.VimMode
 
         private void PasteBeforeCursor(int count) => Paste(count, before: true);
 
+        // The editor keeps the buffer LF-only (\n) so text handed to plugins has Unix line endings.
+        private static string NormalizeLf(string s) => s?.Replace("\r\n", "\n").Replace("\r", "\n");
+
         private void Paste(int count, bool before)
         {
             try
             {
-                string clip = Clipboard.GetText();
+                // Normalize to Unix line endings so pasted content keeps the buffer \n-only.
+                string clip = NormalizeLf(Clipboard.GetText());
                 if (string.IsNullOrEmpty(clip)) return;
                 if (count < 1) count = 1;
 
                 // Line-wise only when our own line-wise yank still matches the clipboard.
-                bool linewise = _lastYankLinewise && clip == _lastYankText;
+                bool linewise = _lastYankLinewise && clip == NormalizeLf(_lastYankText);
                 string text = _queryTextBox.Text;
 
                 if (linewise)
                 {
-                    string content = clip.TrimEnd('\r', '\n');
+                    string content = clip.TrimEnd('\n');
                     string block = content;
-                    for (int i = 1; i < count; i++) block += "\r\n" + content;
+                    for (int i = 1; i < count; i++) block += "\n" + content;
 
                     int insertPos = before
                         ? VimMotionEngine.GetLineStart(text, _queryTextBox.CaretIndex)
                         : VimMotionEngine.GetLineEnd(text, _queryTextBox.CaretIndex);
 
-                    string toInsert = before ? block + "\r\n" : "\r\n" + block;
+                    string toInsert = before ? block + "\n" : "\n" + block;
                     SetText(text.Insert(insertPos, toInsert));
                     // Caret on the first pasted line.
-                    _queryTextBox.CaretIndex = before ? insertPos : Math.Min(insertPos + 2, _queryTextBox.Text.Length);
+                    _queryTextBox.CaretIndex = before ? insertPos : Math.Min(insertPos + 1, _queryTextBox.Text.Length);
                 }
                 else
                 {
