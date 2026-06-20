@@ -566,5 +566,33 @@ namespace Flow.Launcher.VimMode
             int prevEnd = GetLineEnd(text, lineStart - 1);
             return Math.Min(prevStart + col, prevEnd);
         }
+
+        /// <summary>
+        /// Returns the character range for the line containing <paramref name="caret"/>.
+        /// When <paramref name="includeLineBreak"/> is true (dd / yy), the range includes the
+        /// line's terminator — and for the final line, the preceding terminator instead, so the
+        /// delete doesn't leave a dangling blank line. When false (cc), only the content is covered.
+        /// </summary>
+        public static (int start, int end) GetLineRange(string text, int caret, bool includeLineBreak)
+        {
+            int start = GetLineStart(text, caret);
+            int contentEnd = GetLineEnd(text, caret);
+            if (!includeLineBreak)
+                return (start, contentEnd);
+
+            int end = contentEnd;
+            if (end < text.Length && text[end] == '\r') end++;
+            if (end < text.Length && text[end] == '\n') end++;
+
+            if (end == contentEnd)
+            {
+                // Final line (no trailing terminator): consume the preceding terminator instead.
+                int s = start;
+                if (s > 0 && text[s - 1] == '\n') s--;
+                if (s > 0 && text[s - 1] == '\r') s--;
+                return (s, end);
+            }
+            return (start, end);
+        }
     }
 }

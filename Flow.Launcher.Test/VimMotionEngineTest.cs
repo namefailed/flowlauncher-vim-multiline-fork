@@ -273,5 +273,21 @@ namespace Flow.Launcher.Test
             Assert.That(VimMotionEngine.MoveUp("ab\r\ncdef", 7), Is.EqualTo(2));
             Assert.That(VimMotionEngine.MoveUp("hello", 2), Is.EqualTo(2));
         }
+
+        [Test]
+        public void GetLineRangeTest()
+        {
+            // dd / yy include the line's terminator.
+            Assert.That(VimMotionEngine.GetLineRange(Lines, 1, true), Is.EqualTo((0, 5)));   // "abc\r\n"
+            Assert.That(VimMotionEngine.GetLineRange(Lines, 6, true), Is.EqualTo((5, 10)));  // "def\r\n"
+            // Final line: consume the PRECEDING terminator so no blank line is left behind.
+            Assert.That(VimMotionEngine.GetLineRange(Lines, 11, true), Is.EqualTo((8, 14))); // "\r\nghij"
+            // cc covers content only.
+            Assert.That(VimMotionEngine.GetLineRange(Lines, 1, false), Is.EqualTo((0, 3)));
+            Assert.That(VimMotionEngine.GetLineRange(Lines, 11, false), Is.EqualTo((10, 14)));
+            // Single line: content vs whole.
+            Assert.That(VimMotionEngine.GetLineRange("hello", 2, false), Is.EqualTo((0, 5)));
+            Assert.That(VimMotionEngine.GetLineRange("hello", 2, true), Is.EqualTo((0, 5)));
+        }
     }
 }

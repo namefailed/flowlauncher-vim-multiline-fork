@@ -47,7 +47,18 @@ namespace Flow.Launcher.VimMode
         private string _lastChange = "";
         private int _lastChangeLen = 0;   // chars affected by last change (for . repeat)
         private char _lastReplaceChar = '\0'; // char used in last r{char} (for . repeat)
+        private bool _multiLineMode;      // true when the query box is the multi-line editor
         private readonly Flow.Launcher.Infrastructure.UserSettings.Settings _settings;
+
+        /// <summary>
+        /// Enables or disables multi-line editor mode. In multi-line mode, j/k move the caret
+        /// between lines (result navigation shifts to Ctrl+J/Ctrl+K) and dd/cc/yy/V act on the
+        /// current line. The UI layer toggles this when the editor mode is activated.
+        /// </summary>
+        public void SetMultiLineMode(bool enabled) => _multiLineMode = enabled;
+
+        /// <summary>Gets whether multi-line editor mode is currently active.</summary>
+        public bool IsMultiLineMode => _multiLineMode;
 
         // Vim-style operation-level undo/redo stacks
         private readonly System.Collections.Generic.Stack<(string text, int caretIndex)> _undoStack = new();
@@ -272,6 +283,14 @@ namespace Flow.Launcher.VimMode
                 return true;
             }
 
+            // In multi-line mode j/k move between lines, so result navigation lives on Ctrl+J/Ctrl+K.
+            if (_multiLineMode && modifiers.HasFlag(ModifierKeys.Control) && !modifiers.HasFlag(ModifierKeys.Alt)
+                && _vimEngine.CurrentMode != VimModeType.Insert)
+            {
+                if (e.Key == Key.J) { _viewModel.SelectNextItemCommand.Execute(null); e.Handled = true; return true; }
+                if (e.Key == Key.K) { _viewModel.SelectPrevItemCommand.Execute(null); e.Handled = true; return true; }
+            }
+
             if (modifiers.HasFlag(ModifierKeys.Control) || modifiers.HasFlag(ModifierKeys.Alt))
             {
                 return false;
@@ -391,10 +410,19 @@ namespace Flow.Launcher.VimMode
                     switch (e.Key)
                     {
                         case Key.J:
-                            _viewModel.SelectNextItemCommand.Execute(null);
+                            if (_multiLineMode)
+                                ExecuteMotion(ApplyCountMove(i => VimMotionEngine.MoveDown(_queryTextBox.Text, i)));
+                            else
+                                _viewModel.SelectNextItemCommand.Execute(null);
                             return true;
                         case Key.K:
-                            _viewModel.SelectPrevItemCommand.Execute(null);
+                            if (_multiLineMode)
+                                ExecuteMotion(ApplyCountMove(i => VimMotionEngine.MoveUp(_queryTextBox.Text, i)));
+                            else
+                                _viewModel.SelectPrevItemCommand.Execute(null);
+                            return true;
+                        case Key.O when _multiLineMode:
+                            OpenLine(below: !modifiers.HasFlag(ModifierKeys.Shift));
                             return true;
                         case Key.H:
                             ExecuteMotion(ApplyCountMove(i => VimMotionEngine.MoveLeft(i)));
@@ -424,8 +452,14 @@ namespace Flow.Launcher.VimMode
                             ExecuteMotion(VimMotionEngine.MoveToMatchingBracket(_queryTextBox.Text, _queryTextBox.CaretIndex), MotionInclusivity.InclusivePair);
                             return true;
                         case Key.G:
-                            // 'g' is the prefix for multi-key commands (gu, gU, g~, gv, g_).
-                            if (modifiers == ModifierKeys.None)
+                            // Shift+G -> jump to the last line (G). Plain 'g' is the prefix for
+                            // multi-key commands (gg, gu, gU, g~, gv, g_).
+                            if (modifiers.HasFlag(ModifierKeys.Shift))
+                            {
+                                if (_multiLineMode)
+                                    ExecuteMotion(VimMotionEngine.GetLineStart(_queryTextBox.Text, _queryTextBox.Text.Length));
+                            }
+                            else if (modifiers == ModifierKeys.None)
                             {
                                 _gPending = true;
                             }
@@ -548,24 +582,43 @@ namespace Flow.Launcher.VimMode
                             if (modifiers.HasFlag(ModifierKeys.Shift)) // D, C, Y
                             {
                                 _pendingCommand = cmd;
-                                ExecuteMotion(VimMotionEngine.MoveEndOfLine(_queryTextBox.Text.Length));
+                                int eol = _multiLineMode
+                                    ? VimMotionEngine.GetLineEnd(_queryTextBox.Text, _queryTextBox.CaretIndex)
+                                    : VimMotionEngine.MoveEndOfLine(_queryTextBox.Text.Length);
+                                ExecuteMotion(eol);
                                 _lastChange = cmd.ToUpper() + "_eol";
                                 return true;
                             }
 
                             if (_pendingCommand == cmd) // dd, cc, yy
                             {
-                                if (!string.IsNullOrEmpty(_queryTextBox.Text))
+                                if (_multiLineMode)
                                 {
-                                    SetClipboardText(_queryTextBox.Text);
+                                    var (ls, le) = VimMotionEngine.GetLineRange(_queryTextBox.Text, _queryTextBox.CaretIndex, includeLineBreak: cmd != "c");
+                                    if (le > ls)
+                                        SetClipboardText(_queryTextBox.Text.Substring(ls, le - ls));
+                                    if (cmd == "d" || cmd == "c")
+                                    {
+                                        SetText(_queryTextBox.Text.Remove(ls, le - ls));
+                                        _queryTextBox.CaretIndex = Math.Min(ls, _queryTextBox.Text.Length);
+                                    }
+                                    if (cmd == "c")
+                                        _vimEngine.SwitchToInsert();
                                 }
-                                if (cmd == "d" || cmd == "c")
+                                else
                                 {
-                                    SetText("");
-                                    _queryTextBox.CaretIndex = 0;
+                                    if (!string.IsNullOrEmpty(_queryTextBox.Text))
+                                    {
+                                        SetClipboardText(_queryTextBox.Text);
+                                    }
+                                    if (cmd == "d" || cmd == "c")
+                                    {
+                                        SetText("");
+                                        _queryTextBox.CaretIndex = 0;
+                                    }
+                                    if (cmd == "c")
+                                        _vimEngine.SwitchToInsert();
                                 }
-                                if (cmd == "c")
-                                    _vimEngine.SwitchToInsert();
                                 _lastChange = cmd + cmd;
                                 _pendingCommand = "";
                                 _count = 0;
@@ -857,6 +910,10 @@ namespace Flow.Launcher.VimMode
                 case VimModeType.Normal:
                     switch (e.Key)
                     {
+                        case Key.G when modifiers == ModifierKeys.None:
+                            // gg -> document start (multi-line); on a single line this is just column 0.
+                            ExecuteMotion(0);
+                            return true;
                         case Key.OemMinus when modifiers.HasFlag(ModifierKeys.Shift):
                             ExecuteMotion(VimMotionEngine.MoveLastNonBlank(_queryTextBox.Text));
                             return true;
@@ -1125,6 +1182,30 @@ namespace Flow.Launcher.VimMode
         }
 
         /// <summary>
+        /// Opens a new line below (o) or above (O) the current line, places the caret on it,
+        /// and enters Insert mode. Multi-line mode only.
+        /// </summary>
+        private void OpenLine(bool below)
+        {
+            string text = _queryTextBox.Text;
+            int caret = _queryTextBox.CaretIndex;
+
+            if (below)
+            {
+                int insertPos = VimMotionEngine.GetLineEnd(text, caret);
+                SetText(text.Insert(insertPos, "\r\n"));
+                _queryTextBox.CaretIndex = Math.Min(insertPos + 2, _queryTextBox.Text.Length);
+            }
+            else
+            {
+                int insertPos = VimMotionEngine.GetLineStart(text, caret);
+                SetText(text.Insert(insertPos, "\r\n"));
+                _queryTextBox.CaretIndex = insertPos;
+            }
+            _vimEngine.SwitchToInsert();
+        }
+
+        /// <summary>
         /// Pastes the clipboard text after the cursor (Vim 'p'), <paramref name="count"/> times,
         /// leaving the caret on the last pasted character. Records the change for '.' repeat.
         /// </summary>
@@ -1305,6 +1386,8 @@ namespace Flow.Launcher.VimMode
 
         private void EnterVisualLineMode()
         {
+            // NOTE: Visual Line currently selects the whole query in both modes. Per-line
+            // Visual Line selection + operators is Plan phase 2.4, handled as a separate step.
             if (_queryTextBox.Text.Length == 0) return;
             _visualAnchor = 0;
             _visualCaret = _queryTextBox.Text.Length - 1;
