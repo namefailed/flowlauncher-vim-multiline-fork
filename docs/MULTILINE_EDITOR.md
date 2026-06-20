@@ -5,9 +5,8 @@ single-line Vim mode. It is written so that, a year from now, you can re-open it
 was changed and why — including the WPF quirks that drove some non-obvious decisions.
 
 For the user-facing summary and keybindings, see the [root README](../README.md) and
-[`Flow.Launcher/VimMode/README.md`](../Flow.Launcher/VimMode/README.md). For the original forward-looking
-plan, see [`MULTILINE_PLAN.md`](../MULTILINE_PLAN.md) (kept for history; **this** doc describes what actually
-shipped).
+[`Flow.Launcher/VimMode/README.md`](../Flow.Launcher/VimMode/README.md). This document is the authoritative
+reference for the multi-line editor: it describes what actually shipped and how it works.
 
 ---
 
