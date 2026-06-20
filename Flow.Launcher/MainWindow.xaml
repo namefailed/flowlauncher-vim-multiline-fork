@@ -350,6 +350,14 @@
                     X2="0"
                     Y1="0"
                     Y2="0" />
+            <Canvas x:Name="VimLineGutter"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Stretch"
+                    Width="40"
+                    Background="#14FFFFFF"
+                    Panel.ZIndex="9"
+                    IsHitTestVisible="False"
+                    Visibility="Collapsed" />
             <Rectangle x:Name="VimBlockCaret"
                        Fill="{DynamicResource BasicSystemAccentColor}"
                        Opacity="0.5"
@@ -375,20 +383,32 @@
                 Visibility="Collapsed" />
             <Border
                 x:Name="VimStatusBarHost"
-                HorizontalAlignment="Right"
+                HorizontalAlignment="Stretch"
                 VerticalAlignment="Bottom"
-                Margin="0,0,8,4"
-                CornerRadius="3"
-                Background="#CC1E1E1E"
-                Panel.ZIndex="10"
+                Background="#F01A1A1A"
+                Panel.ZIndex="11"
                 IsHitTestVisible="False"
                 Visibility="Collapsed">
-                <TextBlock
-                    x:Name="VimStatusBar"
-                    Margin="6,1"
-                    FontFamily="Consolas"
-                    FontSize="11"
-                    Foreground="#FFDDDDDD" />
+                <DockPanel LastChildFill="False">
+                    <Border x:Name="VimModeSegment"
+                            DockPanel.Dock="Left"
+                            Background="#0078D7"
+                            Padding="12,3">
+                        <TextBlock x:Name="VimModeText"
+                                   Text="NORMAL"
+                                   FontFamily="Consolas"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   Foreground="White" />
+                    </Border>
+                    <TextBlock x:Name="VimStatusInfo"
+                               DockPanel.Dock="Right"
+                               Margin="0,0,14,0"
+                               VerticalAlignment="Center"
+                               FontFamily="Consolas"
+                               FontSize="12"
+                               Foreground="#FFCCCCCC" />
+                </DockPanel>
             </Border>
             </Grid>
 

@@ -34,7 +34,16 @@ namespace Flow.Launcher.VimMode
         private readonly System.Windows.Shapes.Rectangle _vimBlockCaret;
         private readonly Border _vimModeIndicator;
         private readonly Border _vimStatusBarHost;
-        private readonly System.Windows.Controls.TextBlock _vimStatusText;
+        private readonly Border _vimModeSegment;
+        private readonly System.Windows.Controls.TextBlock _vimModeText;
+        private readonly System.Windows.Controls.TextBlock _vimStatusInfo;
+        private readonly System.Windows.Controls.Canvas _vimLineGutter;
+        // Flow's single-line search chrome, hidden while the editor is active.
+        private readonly UIElement _clockPanel;
+        private readonly UIElement _searchIcon;
+        private readonly UIElement _placeholderBox;
+        private readonly UIElement _suggestionBox;
+        private System.Windows.Controls.ScrollViewer _editorScrollViewer;
         private string _pendingCommand = "";
         private string _awaitingCharCommand = "";
         private string _lastFindCmd = "";
@@ -70,7 +79,10 @@ namespace Flow.Launcher.VimMode
                 _queryTextBox.TextWrapping = TextWrapping.Wrap;
                 _queryTextBox.VerticalContentAlignment = VerticalAlignment.Top;
                 _queryTextBox.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
-                _queryTextBox.MinHeight = 160;
+                _queryTextBox.MinHeight = 220;
+                // Leave room on the left for the line-number gutter and at the bottom for the mode line.
+                _queryTextBox.Padding = new Thickness(GutterWidth + 6, 6, 10, 28);
+                ApplyEditorChrome(true);
                 _vimEngine.SwitchToInsert(); // land in Insert so the user can type immediately
             }
             else
@@ -80,6 +92,8 @@ namespace Flow.Launcher.VimMode
                 _queryTextBox.VerticalContentAlignment = VerticalAlignment.Center;
                 _queryTextBox.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
                 _queryTextBox.ClearValue(FrameworkElement.MinHeightProperty);
+                _queryTextBox.ClearValue(System.Windows.Controls.Control.PaddingProperty);
+                ApplyEditorChrome(false);
                 // Per the persistence rule: the scratchpad only persists while multi-line mode is on.
                 SetText("");
                 _queryTextBox.CaretIndex = 0;
@@ -87,6 +101,100 @@ namespace Flow.Launcher.VimMode
             }
 
             UpdateStatusBar();
+            RedrawLineNumbers();
+        }
+
+        private const double GutterWidth = 40;
+
+        /// <summary>
+        /// Hides Flow's single-line search chrome (clock, search icon, placeholder, suggestion) while
+        /// the editor is active and shows the gutter + mode line; restores them on exit.
+        /// </summary>
+        private void ApplyEditorChrome(bool editor)
+        {
+            void Toggle(UIElement el)
+            {
+                if (el == null) return;
+                if (editor) el.Visibility = Visibility.Collapsed;
+                else el.ClearValue(UIElement.VisibilityProperty);
+            }
+            Toggle(_clockPanel);
+            Toggle(_searchIcon);
+            Toggle(_placeholderBox);
+            Toggle(_suggestionBox);
+
+            if (_vimLineGutter != null)
+                _vimLineGutter.Visibility = editor ? Visibility.Visible : Visibility.Collapsed;
+
+            if (editor) HookEditorScroll();
+        }
+
+        private void HookEditorScroll()
+        {
+            if (_editorScrollViewer != null) return;
+            _editorScrollViewer = FindDescendantScrollViewer(_queryTextBox);
+            if (_editorScrollViewer != null)
+                _editorScrollViewer.ScrollChanged += (s, e) => RedrawLineNumbers();
+        }
+
+        private static System.Windows.Controls.ScrollViewer FindDescendantScrollViewer(DependencyObject root)
+        {
+            if (root == null) return null;
+            int count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+            for (int i = 0; i < count; i++)
+            {
+                var child = System.Windows.Media.VisualTreeHelper.GetChild(root, i);
+                if (child is System.Windows.Controls.ScrollViewer sv) return sv;
+                var found = FindDescendantScrollViewer(child);
+                if (found != null) return found;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Draws line numbers in the gutter, aligning each to its line's first visual row via
+        /// GetRectFromCharacterIndex so wrapping and scrolling stay correct.
+        /// </summary>
+        private void RedrawLineNumbers()
+        {
+            if (_vimLineGutter == null) return;
+            _vimLineGutter.Children.Clear();
+            if (!_multiLineMode || !_settings.EnableVimMode) return;
+
+            try
+            {
+                string text = _queryTextBox.Text;
+                double viewHeight = _queryTextBox.ActualHeight;
+                double marginTop = _queryTextBox.Margin.Top;
+                var fg = CreateBrush(128, 128, 128);
+                var font = new System.Windows.Media.FontFamily("Consolas");
+
+                int idx = 0;
+                for (int ln = 1; ; ln++)
+                {
+                    var rect = _queryTextBox.GetRectFromCharacterIndex(idx);
+                    if (!rect.IsEmpty && rect.Bottom >= 0 && rect.Top <= viewHeight)
+                    {
+                        var tb = new System.Windows.Controls.TextBlock
+                        {
+                            Text = ln.ToString(),
+                            FontFamily = font,
+                            FontSize = 12,
+                            Foreground = fg,
+                            TextAlignment = TextAlignment.Right,
+                            Width = GutterWidth - 8
+                        };
+                        System.Windows.Controls.Canvas.SetTop(tb, rect.Top + marginTop);
+                        System.Windows.Controls.Canvas.SetLeft(tb, 0);
+                        _vimLineGutter.Children.Add(tb);
+                    }
+
+                    int nl = text.IndexOf('\n', idx);
+                    if (nl < 0) break;
+                    idx = nl + 1;
+                }
+            }
+            catch (Exception ex) { Flow.Launcher.Infrastructure.Logger.Log.Exception("VimManager", "Line gutter redraw failed", ex); }
         }
 
         /// <summary>Toggles multi-line editor mode (bound to Ctrl+Enter).</summary>
@@ -103,27 +211,24 @@ namespace Flow.Launcher.VimMode
         {
             if (_vimStatusBarHost == null) return;
 
-            if (!_multiLineMode || !_settings.EnableVimMode)
-            {
-                _vimStatusBarHost.Visibility = Visibility.Collapsed;
-                return;
-            }
-
-            _vimStatusBarHost.Visibility = Visibility.Visible;
-            if (_vimStatusText == null) return;
+            bool show = _multiLineMode && _settings.EnableVimMode;
+            _vimStatusBarHost.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            if (!show || _vimModeText == null) return;
 
             string text = _queryTextBox.Text;
             int caret = _queryTextBox.CaretIndex;
             int line = VimMotionEngine.GetLineNumber(text, caret) + 1;
             int col = VimMotionEngine.GetColumn(text, caret) + 1;
-            string mode = _vimEngine.CurrentMode switch
+            var (label, r, g, b) = _vimEngine.CurrentMode switch
             {
-                VimModeType.Normal => "NORMAL",
-                VimModeType.Visual => "VISUAL",
-                VimModeType.VisualLine => "V-LINE",
-                _ => "INSERT"
+                VimModeType.Normal => ("NORMAL", (byte)0, (byte)120, (byte)215),
+                VimModeType.Visual => ("VISUAL", (byte)153, (byte)50, (byte)204),
+                VimModeType.VisualLine => ("V-LINE", (byte)255, (byte)140, (byte)0),
+                _ => ("INSERT", (byte)40, (byte)167, (byte)69)
             };
-            _vimStatusText.Text = $"{mode}  Ln {line}, Col {col}  |  {text.Length} chars";
+            _vimModeText.Text = label;
+            if (_vimModeSegment != null) _vimModeSegment.Background = CreateBrush(r, g, b);
+            if (_vimStatusInfo != null) _vimStatusInfo.Text = $"Ln {line}, Col {col}    {text.Length} chars";
         }
 
         // Vim-style operation-level undo/redo stacks
@@ -178,7 +283,14 @@ namespace Flow.Launcher.VimMode
             _vimBlockCaret = vimBlockCaret;
             _vimModeIndicator = vimModeIndicator;
             _vimStatusBarHost = vimStatusBarHost;
-            _vimStatusText = vimStatusBarHost?.Child as System.Windows.Controls.TextBlock;
+            _vimModeSegment = mainWindow.FindName("VimModeSegment") as Border;
+            _vimModeText = mainWindow.FindName("VimModeText") as System.Windows.Controls.TextBlock;
+            _vimStatusInfo = mainWindow.FindName("VimStatusInfo") as System.Windows.Controls.TextBlock;
+            _vimLineGutter = mainWindow.FindName("VimLineGutter") as System.Windows.Controls.Canvas;
+            _clockPanel = mainWindow.FindName("ClockPanel") as UIElement;
+            _searchIcon = mainWindow.FindName("SearchIcon") as UIElement;
+            _placeholderBox = mainWindow.FindName("QueryTextPlaceholderBox") as UIElement;
+            _suggestionBox = mainWindow.FindName("QueryTextSuggestionBox") as UIElement;
             _settings = settings;
 
             _vimEngine = new VimEngine();
@@ -244,7 +356,11 @@ namespace Flow.Launcher.VimMode
                 catch (Exception ex) { Flow.Launcher.Infrastructure.Logger.Log.Exception("VimManager", "Layout exception in UpdateCaretPosition", ex); }
             }
 
-            if (_multiLineMode) UpdateStatusBar();
+            if (_multiLineMode)
+            {
+                UpdateStatusBar();
+                RedrawLineNumbers();
+            }
         }
 
         private void ViewModel_PropertyChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e)
