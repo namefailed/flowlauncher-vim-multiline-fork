@@ -4,6 +4,9 @@
 **Based on:** `namefailed/flowlauncher-vim-fork` (existing Vim mode fork)  
 **Goal:** Transform Flow Launcher's popup into a floating, terminal-grade, **multi-line Vim editor** — a scratchpad you summon globally, write in with full Vim motions, then dismiss or export.
 
+> **Status:** this is the original forward-looking plan, kept for history. For what actually shipped and how it
+> works (the as-built reference), see [`docs/MULTILINE_EDITOR.md`](docs/MULTILINE_EDITOR.md).
+
 ---
 
 ## What Is This?

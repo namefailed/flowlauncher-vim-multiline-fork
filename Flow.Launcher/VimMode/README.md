@@ -6,6 +6,11 @@ into a small modal editor so you can navigate and fix long queries without leavi
 The feature is **disabled by default**. Enable it under **Settings → General → "Enable Advanced Vim Mode"**.
 When off, the search bar behaves exactly as it always has.
 
+> **This is the multi-line fork.** Press `Ctrl+Enter` to turn the search box into a fixed-size, scrollable,
+> multi-line Vim editor (line numbers, mode line, and send-to-plugin on `Enter`). Every keybinding below still
+> applies; in the editor the line-wise commands act on real lines. For how the editor is built, see
+> [`docs/MULTILINE_EDITOR.md`](../../docs/MULTILINE_EDITOR.md).
+
 ## Design
 
 The implementation is split into three pieces so the logic stays testable:
@@ -91,5 +96,7 @@ Use a text object after an operator (`d`, `c`, `y`, `gu`, …):
   digits work on any layout; some symbols/punctuation may resolve incorrectly on others.
 - **Dot-repeat of inserts** — `.` replays the operator/motion of the last change but not text typed in
   Insert mode, so `cwfoo<Esc>.` re-deletes a word without re-typing `foo`.
-- **Single line** — the query is a single line, so line-wise commands (`dd`, `cc`, `V`, `0`/`$`) act on the
-  whole query and `gg`/`G` are not bound.
+- **Single line vs editor** — outside the multi-line editor the box is a single line, so line-wise commands
+  (`dd`, `cc`, `V`, `0`/`$`) act on the whole query and `gg`/`G` are not bound. Inside the editor
+  (`Ctrl+Enter`) they act on real lines, and `gg`/`G`, `o`/`O`, and line-wise `dj`/`dk` are bound. See
+  [`docs/MULTILINE_EDITOR.md`](../../docs/MULTILINE_EDITOR.md).

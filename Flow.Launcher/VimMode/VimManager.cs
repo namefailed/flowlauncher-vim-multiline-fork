@@ -67,7 +67,8 @@ namespace Flow.Launcher.VimMode
         private int _lastChangeLen = 0;   // chars affected by last change (for . repeat)
         private char _lastReplaceChar = '\0'; // char used in last r{char} (for . repeat)
         private bool _multiLineMode;      // true when the query box is the multi-line editor
-        private string _multiLineBuffer = ""; // scratchpad preserved across hide/show while multi-line
+        private string _multiLineBuffer = ""; // the multi-line editor's text; preserved across hide/show and mode switches
+        private string _singleLineBuffer = ""; // the normal single-line Flow query; preserved while editing in multi-line
         private readonly Flow.Launcher.Infrastructure.UserSettings.Settings _settings;
 
         /// <summary>
@@ -79,6 +80,12 @@ namespace Flow.Launcher.VimMode
         public void SetMultiLineMode(bool enabled)
         {
             if (_multiLineMode == enabled) return;
+
+            // Each mode keeps its own text buffer, so Ctrl+Enter never loses what you were writing in the
+            // other one. Stash the text of the mode we're leaving before switching to the other's buffer.
+            if (enabled) _singleLineBuffer = _queryTextBox.Text;
+            else _multiLineBuffer = _queryTextBox.Text;
+
             _multiLineMode = enabled;
 
             if (enabled)
@@ -86,38 +93,88 @@ namespace Flow.Launcher.VimMode
                 _queryTextBox.AcceptsReturn = true;
                 _queryTextBox.TextWrapping = TextWrapping.Wrap;
                 _queryTextBox.VerticalContentAlignment = VerticalAlignment.Top;
-                // Hidden scrollbar (the default one is ugly); content still follows the caret.
-                _queryTextBox.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
-                // Fixed editor size (MinHeight overrides the bound single-line Height). Content past
-                // the box scrolls to follow the caret; outgrowing it -> Ctrl+Shift+E external editor.
+                // Fixed editor size (MinHeight overrides the bound single-line Height; we never write the
+                // Height DP itself, which is TwoWay-bound to the persisted single-line query-box height).
                 _queryTextBox.MinHeight = 220;
                 _queryTextBox.MaxHeight = 220;
-                // Drop the query box's 16px left margin (it reserved space for the search icon) so the
-                // text sits right next to the small gutter; bottom padding clears the mode line.
+                // Drop the query box's 16px left margin (it reserved space for the search icon) so the text
+                // sits next to the small gutter; the 14px right padding leaves room for the scrollbar; the
+                // bottom padding clears the mode line.
                 _queryTextBox.Margin = new Thickness(0, 7, 0, 7);
-                _queryTextBox.Padding = new Thickness(GutterWidth, 6, 10, 32);
-                ApplyEditorChrome(true);
-                _vimEngine.SwitchToInsert(); // land in Insert so the user can type immediately
+                _queryTextBox.Padding = new Thickness(GutterWidth, 6, 14, 32);
+                ApplyEditorChrome(true);        // also resolves _editorScrollViewer via HookEditorScroll
+                EnableEditorScrollbar(true);    // real scrollbar + viewport clamp (fixes paste-stretch)
+                // Restore the editor scratchpad and select it so typing starts over (Flow's default feel).
+                SetText(_multiLineBuffer);
+                _vimEngine.SwitchToInsert();    // land in Insert so the user can type immediately
+                _queryTextBox.SelectAll();
             }
             else
             {
                 _queryTextBox.AcceptsReturn = false;
                 _queryTextBox.TextWrapping = TextWrapping.NoWrap;
                 _queryTextBox.VerticalContentAlignment = VerticalAlignment.Center;
-                _queryTextBox.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
                 _queryTextBox.ClearValue(FrameworkElement.MinHeightProperty);
                 _queryTextBox.ClearValue(FrameworkElement.MaxHeightProperty);
                 _queryTextBox.ClearValue(FrameworkElement.MarginProperty);
                 _queryTextBox.ClearValue(System.Windows.Controls.Control.PaddingProperty);
+                EnableEditorScrollbar(false);   // restore the template's hidden scrollbar + clear the clamp
                 ApplyEditorChrome(false);
-                // Per the persistence rule: the scratchpad only persists while multi-line mode is on.
-                SetText("");
-                _queryTextBox.CaretIndex = 0;
+                // Restore the single-line query and select it so typing starts over (Flow's default feel).
+                SetText(_singleLineBuffer);
                 _vimEngine.SwitchToInsert();
+                _queryTextBox.SelectAll();
             }
 
             UpdateStatusBar();
             RedrawLineNumbers();
+        }
+
+        /// <summary>
+        /// Turns the editor's inner ScrollViewer (the TextBox template's PART_ContentHost) into a real,
+        /// content-constraining scrollbar while the editor is active, and restores the template default on
+        /// exit. The base template hardcodes VerticalScrollBarVisibility="Hidden" as a literal (not a
+        /// TemplateBinding), so setting the property on the TextBox is a no-op — we must set it on the
+        /// resolved inner viewer instead.
+        ///
+        /// This is also what stops the window stretching on a big paste. With "Hidden" the inner viewer
+        /// measures its content at infinite height, so under the window's SizeToContent="Height" a bulk paste
+        /// briefly inflates the whole window (it only self-corrects on the next layout pass). "Auto" makes the
+        /// viewer measure against its viewport and scroll, so its desired height is bounded by MaxHeight and
+        /// can never grow the window. Both properties are set only on this editor instance and fully reverted
+        /// on exit (Hidden + ClearValue), so single-line mode is byte-for-byte unchanged.
+        /// </summary>
+        private void EnableEditorScrollbar(bool editor)
+        {
+            void Apply()
+            {
+                if (_editorScrollViewer == null) return;
+                if (editor)
+                {
+                    _editorScrollViewer.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+                    _editorScrollViewer.MaxHeight = 220; // pin the viewport; content scrolls inside
+                }
+                else
+                {
+                    _editorScrollViewer.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden; // template default
+                    _editorScrollViewer.ClearValue(FrameworkElement.MaxHeightProperty);
+                }
+            }
+
+            HookEditorScroll(); // idempotent; ensures _editorScrollViewer is resolved
+            if (_editorScrollViewer != null)
+            {
+                Apply();
+            }
+            else if (editor)
+            {
+                // Very first entry, before the visual tree is realized: defer one layout pass.
+                _mainWindow.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
+                {
+                    HookEditorScroll();
+                    Apply();
+                }));
+            }
         }
 
         private const double GutterWidth = 24;
@@ -414,8 +471,9 @@ namespace Flow.Launcher.VimMode
                 }
                 else
                 {
-                    // Hiding: remember the buffer only while multi-line mode stays on.
-                    _multiLineBuffer = _multiLineMode ? _queryTextBox.Text : "";
+                    // Hiding: capture the latest editor text. Both buffers persist across hide/show so
+                    // neither mode loses its content.
+                    if (_multiLineMode) _multiLineBuffer = _queryTextBox.Text;
                 }
             }
         }
@@ -1543,6 +1601,7 @@ namespace Flow.Launcher.VimMode
                 System.IO.File.WriteAllText(path, _queryTextBox.Text);
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
                 SetMultiLineMode(false); // content now lives in the file; leave the inline editor
+                _multiLineBuffer = ""; // the scratchpad was exported to the file; start fresh next time
                 _viewModel.Hide();
             }
             catch (Exception ex) { Flow.Launcher.Infrastructure.Logger.Log.Exception("VimManager", "Open in external editor failed", ex); }
