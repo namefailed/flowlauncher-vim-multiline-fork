@@ -55,6 +55,7 @@
                         UseLayoutRounding="False">
                         <Grid.Resources>
                             <converter:HighlightTextConverter x:Key="HighlightTextConverter" />
+                            <converter:MultilineTitleConverter x:Key="MultilineTitleConverter" />
                             <converter:OrdinalConverter x:Key="OrdinalConverter" />
                             <converter:OpenResultHotkeyVisibilityConverter x:Key="OpenResultHotkeyVisibilityConverter" />
                         </Grid.Resources>
@@ -192,7 +193,7 @@
                                 ToolTipService.ShowOnDisabled="True">
                                 <vm:ResultsViewModel.FormattedText>
                                     <MultiBinding Converter="{StaticResource HighlightTextConverter}">
-                                        <Binding Path="Result.Title" />
+                                        <Binding Path="Result.Title" Converter="{StaticResource MultilineTitleConverter}" />
                                         <Binding Path="Result.TitleHighlightData" />
                                     </MultiBinding>
                                 </vm:ResultsViewModel.FormattedText>

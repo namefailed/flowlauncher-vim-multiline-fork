@@ -512,6 +512,16 @@ namespace Flow.Launcher.VimMode
                 return true;
             }
 
+            // In the editor, Enter while NOT in Insert mode (i.e. Esc'd to Normal/Visual) sends the
+            // whole multi-line buffer to the selected result/plugin. In Insert mode Enter is a newline.
+            if (_multiLineMode && e.Key == Key.Enter && modifiers == ModifierKeys.None
+                && _vimEngine.CurrentMode != VimModeType.Insert)
+            {
+                _viewModel.OpenResultCommand.Execute(null);
+                e.Handled = true;
+                return true;
+            }
+
             if (modifiers.HasFlag(ModifierKeys.Control) && e.Key == Key.R && _vimEngine.CurrentMode == VimModeType.Normal)
             {
                 VimRedo();
