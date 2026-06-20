@@ -594,5 +594,17 @@ namespace Flow.Launcher.VimMode
             }
             return (start, end);
         }
+
+        /// <summary>
+        /// Returns the range a line-wise operator (dd / cc / yy) should act on.
+        /// In single-line mode the operator covers the whole query (the historical behaviour);
+        /// in multi-line mode it covers the current line, via <see cref="GetLineRange"/>.
+        /// This is the single source of truth for the mode difference, so both modes are testable.
+        /// </summary>
+        public static (int start, int end) LineOperatorRange(string text, int caret, bool multiLine, bool includeLineBreak)
+        {
+            if (!multiLine) return (0, text.Length);
+            return GetLineRange(text, caret, includeLineBreak);
+        }
     }
 }

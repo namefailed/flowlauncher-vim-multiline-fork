@@ -592,33 +592,19 @@ namespace Flow.Launcher.VimMode
 
                             if (_pendingCommand == cmd) // dd, cc, yy
                             {
-                                if (_multiLineMode)
+                                // Single source of truth for the mode difference: whole query in
+                                // single-line mode, current line in multi-line mode (cc keeps the line).
+                                var (ls, le) = VimMotionEngine.LineOperatorRange(
+                                    _queryTextBox.Text, _queryTextBox.CaretIndex, _multiLineMode, includeLineBreak: cmd != "c");
+                                if (le > ls)
+                                    SetClipboardText(_queryTextBox.Text.Substring(ls, le - ls));
+                                if (cmd == "d" || cmd == "c")
                                 {
-                                    var (ls, le) = VimMotionEngine.GetLineRange(_queryTextBox.Text, _queryTextBox.CaretIndex, includeLineBreak: cmd != "c");
-                                    if (le > ls)
-                                        SetClipboardText(_queryTextBox.Text.Substring(ls, le - ls));
-                                    if (cmd == "d" || cmd == "c")
-                                    {
-                                        SetText(_queryTextBox.Text.Remove(ls, le - ls));
-                                        _queryTextBox.CaretIndex = Math.Min(ls, _queryTextBox.Text.Length);
-                                    }
-                                    if (cmd == "c")
-                                        _vimEngine.SwitchToInsert();
+                                    SetText(_queryTextBox.Text.Remove(ls, le - ls));
+                                    _queryTextBox.CaretIndex = Math.Min(ls, _queryTextBox.Text.Length);
                                 }
-                                else
-                                {
-                                    if (!string.IsNullOrEmpty(_queryTextBox.Text))
-                                    {
-                                        SetClipboardText(_queryTextBox.Text);
-                                    }
-                                    if (cmd == "d" || cmd == "c")
-                                    {
-                                        SetText("");
-                                        _queryTextBox.CaretIndex = 0;
-                                    }
-                                    if (cmd == "c")
-                                        _vimEngine.SwitchToInsert();
-                                }
+                                if (cmd == "c")
+                                    _vimEngine.SwitchToInsert();
                                 _lastChange = cmd + cmd;
                                 _pendingCommand = "";
                                 _count = 0;
@@ -910,8 +896,9 @@ namespace Flow.Launcher.VimMode
                 case VimModeType.Normal:
                     switch (e.Key)
                     {
-                        case Key.G when modifiers == ModifierKeys.None:
-                            // gg -> document start (multi-line); on a single line this is just column 0.
+                        case Key.G when modifiers == ModifierKeys.None && _multiLineMode:
+                            // gg -> document start. Multi-line only; in single-line mode 'gg' stays a
+                            // no-op (matching the single-line fork), since '0' already goes to the start.
                             ExecuteMotion(0);
                             return true;
                         case Key.OemMinus when modifiers.HasFlag(ModifierKeys.Shift):

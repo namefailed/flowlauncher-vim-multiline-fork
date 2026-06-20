@@ -289,5 +289,22 @@ namespace Flow.Launcher.Test
             Assert.That(VimMotionEngine.GetLineRange("hello", 2, false), Is.EqualTo((0, 5)));
             Assert.That(VimMotionEngine.GetLineRange("hello", 2, true), Is.EqualTo((0, 5)));
         }
+
+        [Test]
+        public void LineOperatorRange_SingleLineMode_CoversWholeQuery()
+        {
+            // Single-line mode: dd/cc/yy operate on the entire query regardless of caret/content.
+            Assert.That(VimMotionEngine.LineOperatorRange(Lines, 6, multiLine: false, includeLineBreak: true), Is.EqualTo((0, Lines.Length)));
+            Assert.That(VimMotionEngine.LineOperatorRange(Lines, 6, multiLine: false, includeLineBreak: false), Is.EqualTo((0, Lines.Length)));
+            Assert.That(VimMotionEngine.LineOperatorRange("hello world", 4, multiLine: false, includeLineBreak: true), Is.EqualTo((0, 11)));
+        }
+
+        [Test]
+        public void LineOperatorRange_MultiLineMode_CoversCurrentLine()
+        {
+            // Multi-line mode: dd/yy include the line break, cc covers content only.
+            Assert.That(VimMotionEngine.LineOperatorRange(Lines, 6, multiLine: true, includeLineBreak: true), Is.EqualTo((5, 10)));
+            Assert.That(VimMotionEngine.LineOperatorRange(Lines, 6, multiLine: true, includeLineBreak: false), Is.EqualTo((5, 8)));
+        }
     }
 }
