@@ -1,0 +1,95 @@
+# Fork release pipeline for the multi-line Vim editor fork.
+#
+# Builds the fork and publishes the installer + portable zip to a GitHub Release
+# so the latest build is downloadable without a login. Triggers on a push to
+# multiline-editor, on a v* tag, or manually ("Run workflow").
+
+name: Fork Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Base version (X.Y.Z) for this fork build"
+        required: true
+        default: "1.20.2"
+  push:
+    branches:
+      - multiline-editor
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      NUGET_CERT_REVOCATION_MODE: offline
+      BUILD_NUMBER: ${{ github.run_number }}
+      # Base version for branch / manual builds (tag pushes use the tag instead).
+      FORK_BASE_VERSION: "1.20.2"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            RAW="${GITHUB_REF_NAME#v}"            # tag v1.20.2 -> 1.20.2
+            TAG="${GITHUB_REF_NAME}"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW="${{ github.event.inputs.version }}"
+            TAG="v${RAW}.${{ github.run_number }}"
+          else
+            # push to the multiline-editor branch
+            RAW="${FORK_BASE_VERSION}"
+            TAG="v${RAW}.${{ github.run_number }}"
+          fi
+          echo "tag=${TAG}"                       >> "$GITHUB_OUTPUT"
+          echo "assembly=${RAW}.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          # post_build.ps1 reads $env:flowVersion (case-insensitive on Windows)
+          echo "flowVersion=${RAW}"               >> "$GITHUB_ENV"
+
+      - name: Set assembly version
+        uses: vers-one/dotnet-project-version-updater@v1.8
+        with:
+          file: |
+            "**/SolutionAssemblyInfo.cs"
+          version: ${{ steps.ver.outputs.assembly }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Install vpk
+        run: dotnet tool install -g vpk
+
+      - name: Restore dependencies
+        run: nuget restore
+
+      - name: Build
+        run: dotnet build --no-restore -c Release
+
+      - name: Package installer + portable
+        shell: powershell
+        run: .\Scripts\post_build.ps1
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          exe=$(ls Output/Packages/Flow-Launcher-*.exe | head -n1)
+          if [ -z "$exe" ]; then echo "Installer not found in Output/Packages"; exit 1; fi
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            "$exe" \
+            "Output/Packages/Flow-Launcher-Portable.zip" \
+            --title "Vim Multiline Editor ${{ steps.ver.outputs.tag }}" \
+            --notes "Automated build of the multi-line Vim editor fork. Enable it in Settings > General > 'Enable Advanced Vim Mode', open Flow, then press Ctrl+Enter to drop into the multi-line editor. This is an unsigned build, so Windows SmartScreen may warn -- choose More info > Run anyway if you trust it." \
+            --target "$GITHUB_SHA" \
+            --latest
