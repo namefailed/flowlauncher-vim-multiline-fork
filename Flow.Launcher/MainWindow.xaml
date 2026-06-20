@@ -312,7 +312,7 @@
                         Text="{Binding DateText}"
                         Visibility="{Binding Settings.UseDate, Converter={StaticResource BoolToVisibilityConverter}}" />
                 </StackPanel>
-                <Border>
+                <Border x:Name="QueryIconArea">
                     <Grid WindowChrome.IsHitTestVisibleInChrome="True">
                         <Image
                             x:Name="PluginActivationIcon"

@@ -47,10 +47,10 @@ namespace Flow.Launcher.VimMode
         private readonly System.Windows.Controls.Canvas _vimLineGutter;
         // Flow's single-line search chrome, hidden while the editor is active.
         private readonly UIElement _clockPanel;
-        private readonly UIElement _searchIcon;
         private readonly UIElement _placeholderBox;
         private readonly UIElement _suggestionBox;
-        private readonly UIElement _pluginIcon;
+        // The Border wrapping the search icon + plugin-activation icon (collapsed in the editor).
+        private readonly UIElement _queryIconArea;
         private System.Windows.Controls.ScrollViewer _editorScrollViewer;
         private string _pendingCommand = "";
         private string _awaitingCharCommand = "";
@@ -138,10 +138,18 @@ namespace Flow.Launcher.VimMode
                 else { el.ClearValue(UIElement.VisibilityProperty); el.ClearValue(UIElement.OpacityProperty); }
             }
             Toggle(_clockPanel);
-            Toggle(_searchIcon);
             Toggle(_placeholderBox);
             Toggle(_suggestionBox);
-            Toggle(_pluginIcon);
+
+            // The search + plugin-activation icons share one Border. Collapse the whole Border so
+            // neither occupies layout or draws over the editor text. (Collapsing the individual icons
+            // isn't enough: the plugin icon's style re-asserts its visibility/opacity as the query
+            // changes, leaving an invisible overlay on top of the text. Flow never touches this Border.)
+            if (_queryIconArea != null)
+            {
+                if (editor) _queryIconArea.Visibility = Visibility.Collapsed;
+                else _queryIconArea.ClearValue(UIElement.VisibilityProperty);
+            }
 
             if (_vimLineGutter != null)
                 _vimLineGutter.Visibility = editor ? Visibility.Visible : Visibility.Collapsed;
@@ -307,10 +315,9 @@ namespace Flow.Launcher.VimMode
             _vimStatusInfo = mainWindow.FindName("VimStatusInfo") as System.Windows.Controls.TextBlock;
             _vimLineGutter = mainWindow.FindName("VimLineGutter") as System.Windows.Controls.Canvas;
             _clockPanel = mainWindow.FindName("ClockPanel") as UIElement;
-            _searchIcon = mainWindow.FindName("SearchIcon") as UIElement;
             _placeholderBox = mainWindow.FindName("QueryTextPlaceholderBox") as UIElement;
             _suggestionBox = mainWindow.FindName("QueryTextSuggestionBox") as UIElement;
-            _pluginIcon = mainWindow.FindName("PluginActivationIcon") as UIElement;
+            _queryIconArea = mainWindow.FindName("QueryIconArea") as UIElement;
             _settings = settings;
 
             _vimEngine = new VimEngine();
