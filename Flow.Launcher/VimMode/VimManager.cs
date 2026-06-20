@@ -922,13 +922,16 @@ namespace Flow.Launcher.VimMode
                             _awaitingTextObject = "i";
                             return true;
                         case Key.I when modifiers == ModifierKeys.None && _pendingCommand == "":
+                            PushUndo(); // snapshot pre-insert state so `u` reverts the whole insert session
                             _vimEngine.SwitchToInsert();
                             return true;
                         case Key.I when modifiers.HasFlag(ModifierKeys.Shift):
+                            PushUndo();
                             _vimEngine.SwitchToInsert();
                             _queryTextBox.CaretIndex = 0;
                             return true;
                         case Key.A when modifiers == ModifierKeys.None && _pendingCommand == "":
+                            PushUndo();
                             _vimEngine.SwitchToInsert();
                             if (_queryTextBox.CaretIndex < _queryTextBox.Text.Length)
                             {
@@ -936,6 +939,7 @@ namespace Flow.Launcher.VimMode
                             }
                             return true;
                         case Key.A when modifiers.HasFlag(ModifierKeys.Shift):
+                            PushUndo();
                             _vimEngine.SwitchToInsert();
                             _queryTextBox.CaretIndex = _queryTextBox.Text.Length;
                             return true;
@@ -1418,7 +1422,8 @@ namespace Flow.Launcher.VimMode
                     break;
                 case "x":
                     {
-                        int n = GetCount();
+                        int n = _count > 0 ? GetCount() : _lastChangeLen; // bare `.` repeats the original count
+                        if (n < 1) n = 1;
                         int c = _queryTextBox.CaretIndex;
                         int len = Math.Min(n, _queryTextBox.Text.Length - c);
                         if (len > 0)
@@ -1483,11 +1488,16 @@ namespace Flow.Launcher.VimMode
                     break;
                 case "r":
                     {
+                        int n = _count > 0 ? GetCount() : _lastChangeLen; // bare `.` repeats the original count
+                        if (n < 1) n = 1;
                         int c = _queryTextBox.CaretIndex;
                         if (_lastReplaceChar != '\0' && c < _queryTextBox.Text.Length)
                         {
-                            SetText(_queryTextBox.Text.Remove(c, 1).Insert(c, _lastReplaceChar.ToString()));
-                            _queryTextBox.CaretIndex = c;
+                            int len = Math.Min(n, _queryTextBox.Text.Length - c);
+                            char[] chars = _queryTextBox.Text.ToCharArray();
+                            for (int i = c; i < c + len; i++) chars[i] = _lastReplaceChar;
+                            SetText(new string(chars));
+                            _queryTextBox.CaretIndex = c + len - 1;
                         }
                     }
                     break;
@@ -1674,6 +1684,7 @@ namespace Flow.Launcher.VimMode
                         SetText(new string(chars));
                         _queryTextBox.CaretIndex = caret + len - 1;
                         _lastChange = "r";
+                        _lastChangeLen = len; // so a bare `.` repeats the counted replace
                         _lastReplaceChar = c;
                     }
                 }
