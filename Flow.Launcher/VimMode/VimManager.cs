@@ -81,7 +81,7 @@ namespace Flow.Launcher.VimMode
                 _queryTextBox.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
                 _queryTextBox.MinHeight = 220;
                 // Leave room on the left for the line-number gutter and at the bottom for the mode line.
-                _queryTextBox.Padding = new Thickness(GutterWidth + 6, 6, 10, 28);
+                _queryTextBox.Padding = new Thickness(GutterWidth + 4, 6, 10, 26);
                 ApplyEditorChrome(true);
                 _vimEngine.SwitchToInsert(); // land in Insert so the user can type immediately
             }
@@ -104,7 +104,7 @@ namespace Flow.Launcher.VimMode
             RedrawLineNumbers();
         }
 
-        private const double GutterWidth = 40;
+        private const double GutterWidth = 26;
 
         /// <summary>
         /// Hides Flow's single-line search chrome (clock, search icon, placeholder, suggestion) while
@@ -115,8 +115,10 @@ namespace Flow.Launcher.VimMode
             void Toggle(UIElement el)
             {
                 if (el == null) return;
-                if (editor) el.Visibility = Visibility.Collapsed;
-                else el.ClearValue(UIElement.VisibilityProperty);
+                // Use Opacity, not Visibility: Flow re-asserts the placeholder/icon Visibility on
+                // query changes, but it never touches Opacity, so 0 reliably keeps them hidden.
+                if (editor) el.Opacity = 0;
+                else el.ClearValue(UIElement.OpacityProperty);
             }
             Toggle(_clockPanel);
             Toggle(_searchIcon);
@@ -166,8 +168,7 @@ namespace Flow.Launcher.VimMode
                 string text = _queryTextBox.Text;
                 double viewHeight = _queryTextBox.ActualHeight;
                 double marginTop = _queryTextBox.Margin.Top;
-                var fg = CreateBrush(128, 128, 128);
-                var font = new System.Windows.Media.FontFamily("Consolas");
+                var fg = (Application.Current.TryFindResource("Color08B") as System.Windows.Media.Brush) ?? CreateBrush(135, 135, 135);
 
                 int idx = 0;
                 for (int ln = 1; ; ln++)
@@ -178,11 +179,10 @@ namespace Flow.Launcher.VimMode
                         var tb = new System.Windows.Controls.TextBlock
                         {
                             Text = ln.ToString(),
-                            FontFamily = font,
-                            FontSize = 12,
+                            FontSize = 11,
                             Foreground = fg,
                             TextAlignment = TextAlignment.Right,
-                            Width = GutterWidth - 8
+                            Width = GutterWidth - 6
                         };
                         System.Windows.Controls.Canvas.SetTop(tb, rect.Top + marginTop);
                         System.Windows.Controls.Canvas.SetLeft(tb, 0);
@@ -219,16 +219,15 @@ namespace Flow.Launcher.VimMode
             int caret = _queryTextBox.CaretIndex;
             int line = VimMotionEngine.GetLineNumber(text, caret) + 1;
             int col = VimMotionEngine.GetColumn(text, caret) + 1;
-            var (label, r, g, b) = _vimEngine.CurrentMode switch
+            // The pill uses the app's accent (set in XAML) to match the theme; the label conveys the mode.
+            _vimModeText.Text = _vimEngine.CurrentMode switch
             {
-                VimModeType.Normal => ("NORMAL", (byte)0, (byte)120, (byte)215),
-                VimModeType.Visual => ("VISUAL", (byte)153, (byte)50, (byte)204),
-                VimModeType.VisualLine => ("V-LINE", (byte)255, (byte)140, (byte)0),
-                _ => ("INSERT", (byte)40, (byte)167, (byte)69)
+                VimModeType.Normal => "NORMAL",
+                VimModeType.Visual => "VISUAL",
+                VimModeType.VisualLine => "V-LINE",
+                _ => "INSERT"
             };
-            _vimModeText.Text = label;
-            if (_vimModeSegment != null) _vimModeSegment.Background = CreateBrush(r, g, b);
-            if (_vimStatusInfo != null) _vimStatusInfo.Text = $"Ln {line}, Col {col}    {text.Length} chars";
+            if (_vimStatusInfo != null) _vimStatusInfo.Text = $"Ln {line}, Col {col}     {text.Length} chars";
         }
 
         // Vim-style operation-level undo/redo stacks
@@ -420,7 +419,8 @@ namespace Flow.Launcher.VimMode
                 // (Normal = accent, Visual = purple, Visual Line = orange). This keeps the
                 // indicator from overlapping the query text or otherwise altering Flow
                 // Launcher's search-bar layout; a text label can be added later if desired.
-                _vimModeIndicator.Visibility = _settings.EnableVimMode && mode != VimModeType.Insert ? Visibility.Visible : Visibility.Collapsed;
+                // In the multi-line editor the mode line shows the mode, so the dot is hidden there.
+                _vimModeIndicator.Visibility = _settings.EnableVimMode && mode != VimModeType.Insert && !_multiLineMode ? Visibility.Visible : Visibility.Collapsed;
 
                 _vimModeIndicator.Background = mode switch
                 {

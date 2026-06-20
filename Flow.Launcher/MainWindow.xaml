@@ -353,8 +353,8 @@
             <Canvas x:Name="VimLineGutter"
                     HorizontalAlignment="Left"
                     VerticalAlignment="Stretch"
-                    Width="40"
-                    Background="#14FFFFFF"
+                    Width="26"
+                    Background="Transparent"
                     Panel.ZIndex="9"
                     IsHitTestVisible="False"
                     Visibility="Collapsed" />
@@ -385,29 +385,29 @@
                 x:Name="VimStatusBarHost"
                 HorizontalAlignment="Stretch"
                 VerticalAlignment="Bottom"
-                Background="#F01A1A1A"
+                Background="Transparent"
                 Panel.ZIndex="11"
                 IsHitTestVisible="False"
                 Visibility="Collapsed">
-                <DockPanel LastChildFill="False">
+                <DockPanel LastChildFill="False" Margin="8,0,14,5">
                     <Border x:Name="VimModeSegment"
                             DockPanel.Dock="Left"
-                            Background="#0078D7"
-                            Padding="12,3">
+                            Background="{DynamicResource BasicSystemAccentColor}"
+                            CornerRadius="4"
+                            Padding="8,1"
+                            VerticalAlignment="Center">
                         <TextBlock x:Name="VimModeText"
                                    Text="NORMAL"
-                                   FontFamily="Consolas"
-                                   FontSize="12"
+                                   FontSize="11"
                                    FontWeight="SemiBold"
                                    Foreground="White" />
                     </Border>
                     <TextBlock x:Name="VimStatusInfo"
                                DockPanel.Dock="Right"
-                               Margin="0,0,14,0"
                                VerticalAlignment="Center"
-                               FontFamily="Consolas"
-                               FontSize="12"
-                               Foreground="#FFCCCCCC" />
+                               FontSize="11"
+                               Opacity="0.7"
+                               Foreground="{DynamicResource Color04B}" />
                 </DockPanel>
             </Border>
             </Grid>
