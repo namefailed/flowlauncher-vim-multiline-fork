@@ -44,6 +44,7 @@ namespace Flow.Launcher.VimMode
         private readonly UIElement _placeholderBox;
         private readonly UIElement _suggestionBox;
         private System.Windows.Controls.ScrollViewer _editorScrollViewer;
+        private System.Windows.Data.BindingBase _savedHeightBinding;
         private string _pendingCommand = "";
         private string _awaitingCharCommand = "";
         private string _lastFindCmd = "";
@@ -79,7 +80,15 @@ namespace Flow.Launcher.VimMode
                 _queryTextBox.TextWrapping = TextWrapping.Wrap;
                 _queryTextBox.VerticalContentAlignment = VerticalAlignment.Top;
                 _queryTextBox.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
-                _queryTextBox.MinHeight = 220;
+                // The query box Height is bound to MainWindowHeight (a fixed single-line height).
+                // Drop that binding so the editor grows with its content (between Min and Max),
+                // instead of being a tall mostly-empty box. The binding is restored on exit.
+                var heightExpr = _queryTextBox.GetBindingExpression(System.Windows.Controls.TextBox.HeightProperty);
+                _savedHeightBinding = heightExpr?.ParentBinding;
+                System.Windows.Data.BindingOperations.ClearBinding(_queryTextBox, System.Windows.Controls.TextBox.HeightProperty);
+                _queryTextBox.ClearValue(System.Windows.Controls.TextBox.HeightProperty); // Auto
+                _queryTextBox.MinHeight = 56;
+                _queryTextBox.MaxHeight = 380;
                 // Leave room on the left for the line-number gutter and at the bottom for the mode line.
                 _queryTextBox.Padding = new Thickness(GutterWidth + 4, 6, 10, 26);
                 ApplyEditorChrome(true);
@@ -92,7 +101,14 @@ namespace Flow.Launcher.VimMode
                 _queryTextBox.VerticalContentAlignment = VerticalAlignment.Center;
                 _queryTextBox.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
                 _queryTextBox.ClearValue(FrameworkElement.MinHeightProperty);
+                _queryTextBox.ClearValue(FrameworkElement.MaxHeightProperty);
                 _queryTextBox.ClearValue(System.Windows.Controls.Control.PaddingProperty);
+                // Restore the single-line height binding.
+                if (_savedHeightBinding != null)
+                {
+                    _queryTextBox.SetBinding(System.Windows.Controls.TextBox.HeightProperty, _savedHeightBinding);
+                    _savedHeightBinding = null;
+                }
                 ApplyEditorChrome(false);
                 // Per the persistence rule: the scratchpad only persists while multi-line mode is on.
                 SetText("");
@@ -115,10 +131,11 @@ namespace Flow.Launcher.VimMode
             void Toggle(UIElement el)
             {
                 if (el == null) return;
-                // Use Opacity, not Visibility: Flow re-asserts the placeholder/icon Visibility on
-                // query changes, but it never touches Opacity, so 0 reliably keeps them hidden.
-                if (editor) el.Opacity = 0;
-                else el.ClearValue(UIElement.OpacityProperty);
+                // Belt and suspenders: Collapse handles the clock/icon (whose Opacity is animated, so
+                // Opacity=0 alone gets overridden), and Opacity=0 handles the placeholder (whose
+                // Visibility Flow re-asserts on query changes). Together they hide reliably.
+                if (editor) { el.Visibility = Visibility.Collapsed; el.Opacity = 0; }
+                else { el.ClearValue(UIElement.VisibilityProperty); el.ClearValue(UIElement.OpacityProperty); }
             }
             Toggle(_clockPanel);
             Toggle(_searchIcon);
