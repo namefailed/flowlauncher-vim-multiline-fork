@@ -55,6 +55,11 @@ Unit tests live in [`Flow.Launcher.Test`](../../Flow.Launcher.Test) (`VimEngineT
 - `;` / `,` — repeat the last character search, same / opposite direction
 - `%` — jump to the matching bracket
 
+### Search & marks
+- `/{pat}` / `?{pat}` — search forward / backward (case-insensitive, wraps); `n` / `N` repeat same / opposite.
+- `m{a-z}` — set a mark · `` `{a-z} `` — jump to its exact spot · `'{a-z}` — jump to its line. Composes with
+  operators (e.g. `` d`a ``).
+
 ### Editing (integrated with the system clipboard)
 - `x` / `X` — delete the character under / before the cursor
 - `s` / `S` — substitute the character / whole query, then enter Insert
@@ -83,7 +88,7 @@ Use a text object after an operator (`d`, `c`, `y`, `gu`, …):
 ### Mode switches
 - `i` / `I` — insert at the cursor / start of the query
 - `a` / `A` — insert after the cursor / at the end of the query
-- `v` / `V` — Visual / Visual Line mode
+- `v` / `V` / `Ctrl-V` — Visual / Visual Line / Visual Block mode
 
 ## Visual mode
 
@@ -92,6 +97,27 @@ Use a text object after an operator (`d`, `c`, `y`, `gu`, …):
   `~` (toggle case), `gu` / `gU` (lower / upper).
 - `i` / `a` start a text object (e.g. `vi(`), `o` swaps the selection ends.
 - `v` toggles between Visual and Visual Line; `Esc` returns to Normal; `j` / `k` navigate results.
+
+## Visual Block mode (`Ctrl-V`, editor)
+
+- A rectangular column selection. `h` / `l` change the column, `j` / `k` the rows, `0` / `$` the line ends.
+- `y` yanks the block (rows joined by newlines), `d` / `x` deletes the columns, `c` changes them.
+- `Shift+I` / `Shift+A` insert before / append after the block on **every** selected row — type once on the
+  top row and it's copied to the rest on `Esc`.
+- `Ctrl-V` again or `Esc` returns to Normal. (`Ctrl-V` in Insert mode still pastes.)
+
+## Command-line (`:`, editor)
+
+- `:w` / `:wq` / `:x` — send the buffer to the selected result (plugin); `:q` — leave the editor.
+- `:s/old/new/` (and `:%s/old/new/`) — replace text across the whole buffer (plain text, not regex).
+
+## Editor conveniences
+
+- **Auto-pair / auto-indent** — typing `(` `[` `{` or a quote inserts the matching close (quotes skip
+  apostrophes in words); `Enter` carries the line's indent. Both toggle in settings.
+- **Crash-safe drafts** — the editor buffer is autosaved and restored after a crash, reboot, or restart.
+- **Settings** — General → *Enable Advanced Vim Mode* expander: enable the editor, set its height in lines,
+  and toggle auto-pair / auto-indent.
 
 ## Known limitations
 

@@ -301,7 +301,33 @@ If you add a new editor tweak, **add its revert in the exit branch in the same c
 
 ---
 
-## 13. Manual test checklist
+## 13. Editor features (drafts, conveniences, search, command-line, visual-block)
+
+These were layered on top of the core editor; all live in `VimManager.cs` unless noted.
+
+- **Crash-safe drafts** — `ScheduleDraftSave` debounce-writes the LF-normalized buffer to
+  `%APPDATA%/FlowLauncher/vim-scratch-draft.txt` on every edit; `RestoreDraftIfAny` reloads it on the first
+  editor open of a fresh process (only when there's no in-memory buffer), so a crash/reboot can't lose an
+  entry. The draft is cleared after a `Ctrl+Shift+E` handoff; a normal send keeps it.
+- **Auto-indent / auto-pair** — `TryAutoPair` (in `PreviewTextInput`) pairs `([{` and quotes (quotes skip
+  apostrophes after a word char), steps over a close char, and Backspace deletes an empty pair; the Insert
+  `Enter` handler carries the line's leading whitespace. Both gated by `Settings.VimEditorAutoPair/AutoIndent`.
+- **Settings** — `Settings.EnableVimMultiLineEditor` (gates `Ctrl+Enter`), `VimEditorVisibleLines`
+  (drives `_editorTextHeight`), `VimEditorAutoPair`, `VimEditorAutoIndent`, surfaced in `SettingsPaneGeneral.xaml`.
+- **Search** — `/` `?` enter command-line mode; `ExecuteCommandLine` runs `FindNext` (case-insensitive,
+  wrap-around, scrolls the match into view); `n`/`N` via `RepeatSearch`.
+- **Command-line** — `EnterCommandLine`/`UpdateCommandLineDisplay` render `prefix + text` in the mode line
+  (`VimCommandLine`); `RunExCommand` handles `:w`/`:wq`/`:x` (send), `:q` (close), `:s///` & `:%s///` (buffer
+  replace, plain text).
+- **Marks** — `_marks` dictionary; `m`/`` ` ``/`'` set the `_pendingMark` prefix, the next key is the register,
+  `HandleMark` stores/jumps (jumps go through `ExecuteMotion`, so they compose with operators).
+- **Visual-block** — `VimModeType.VisualBlock`; entered by Normal/Visual `Ctrl-V`. The block is drawn by the
+  `VimBlockSelection` overlay (`UpdateBlockSelection`, one rect per row). `BlockYank`/`BlockDelete` operate on
+  the column span; `BlockInsert` + `CommitBlockInsert` replicate `Shift+I`/`Shift+A` typing across rows on Esc.
+
+---
+
+## 14. Manual test checklist
 
 - `Ctrl+Enter` toggles in/out; toggling back and forth preserves each side's text; first keystroke after a
   toggle replaces the (selected) restored text.
@@ -317,7 +343,7 @@ If you add a new editor tweak, **add its revert in the exit branch in the same c
 
 ---
 
-## 14. Build & release
+## 15. Build & release
 
 `.github/workflows/fork-release.yml` builds the installer + portable zip (Velopack via
 `Scripts/post_build.ps1`) and publishes a GitHub Release on every push to `multiline-editor` (and on tags /
