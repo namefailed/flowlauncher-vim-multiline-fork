@@ -440,6 +440,14 @@
                                    FontWeight="SemiBold"
                                    Foreground="White" />
                     </Border>
+                    <TextBlock x:Name="VimCommandLine"
+                               DockPanel.Dock="Left"
+                               Margin="8,0,0,0"
+                               VerticalAlignment="Center"
+                               FontFamily="Consolas, Cascadia Mono, Menlo, monospace"
+                               FontSize="12"
+                               Foreground="{DynamicResource Color04B}"
+                               Visibility="Collapsed" />
                     <TextBlock x:Name="VimStatusInfo"
                                DockPanel.Dock="Right"
                                VerticalAlignment="Center"

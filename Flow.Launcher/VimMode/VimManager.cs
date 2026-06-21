@@ -74,6 +74,13 @@ namespace Flow.Launcher.VimMode
         // non-blank. _pendingMark holds the prefix ('m' set, '`' jump-exact, '\'' jump-line) awaiting a register.
         private char _pendingMark;
         private readonly System.Collections.Generic.Dictionary<char, int> _marks = new System.Collections.Generic.Dictionary<char, int>();
+        // Command-line mode: '/' '?' search and ':' commands. _cmdLine is null when inactive, else the text
+        // typed so far (without the prefix); _cmdPrefix is the leading '/', '?', or ':'.
+        private string _cmdLine;
+        private char _cmdPrefix;
+        private string _lastSearch = "";
+        private bool _lastSearchBackward;
+        private System.Windows.Controls.TextBlock _vimCommandLine;
         private bool _gPending;
         private string _awaitingTextObject = "";
         private (int anchor, int caret)? _lastVisualRange;
@@ -572,6 +579,7 @@ namespace Flow.Launcher.VimMode
             _vimModeSegment = mainWindow.FindName("VimModeSegment") as Border;
             _vimModeText = mainWindow.FindName("VimModeText") as System.Windows.Controls.TextBlock;
             _vimStatusInfo = mainWindow.FindName("VimStatusInfo") as System.Windows.Controls.TextBlock;
+            _vimCommandLine = mainWindow.FindName("VimCommandLine") as System.Windows.Controls.TextBlock;
             _vimLineGutter = mainWindow.FindName("VimLineGutter") as System.Windows.Controls.Canvas;
             _queryBoxArea = mainWindow.FindName("QueryBoxArea") as FrameworkElement;
             _resultListBox = mainWindow.FindName("ResultListBox") as FrameworkElement;
@@ -874,6 +882,25 @@ namespace Flow.Launcher.VimMode
             }
 
             var modifiers = e.KeyboardDevice.Modifiers;
+
+            // Command-line mode (/ ? : ) captures all keys: build the line, Enter runs it, Esc cancels.
+            if (_cmdLine != null)
+            {
+                if (e.Key == Key.Escape) { ExitCommandLine(); }
+                else if (e.Key == Key.Enter) { var run = _cmdLine; var pfx = _cmdPrefix; ExitCommandLine(); ExecuteCommandLine(pfx, run); }
+                else if (e.Key == Key.Back)
+                {
+                    if (_cmdLine.Length == 0) ExitCommandLine();
+                    else { _cmdLine = _cmdLine.Substring(0, _cmdLine.Length - 1); UpdateCommandLineDisplay(); }
+                }
+                else
+                {
+                    char ch = GetCharFromKey(e.Key, modifiers);
+                    if (ch != '\0') { _cmdLine += ch; UpdateCommandLineDisplay(); }
+                }
+                e.Handled = true;
+                return true;
+            }
 
             // Ctrl+Enter toggles the multi-line editor (open Flow normally, then drop into the editor).
             // Gated by the setting: only ENTER the editor when it's enabled, but always allow leaving it.
@@ -1222,7 +1249,8 @@ namespace Flow.Launcher.VimMode
                             _awaitingCharCommand = "r";
                             return true;
                         case Key.OemSemicolon:
-                            if (!modifiers.HasFlag(ModifierKeys.Shift) && _lastFindChar != '\0')
+                            if (modifiers.HasFlag(ModifierKeys.Shift)) { EnterCommandLine(':'); return true; } // : command line
+                            if (_lastFindChar != '\0')
                             {
                                 ExecuteFindCommand(_lastFindCmd, _lastFindChar, GetCount());
                                 return true;
@@ -1236,6 +1264,12 @@ namespace Flow.Launcher.VimMode
                                 return true;
                             }
                             return false;
+                        case Key.OemQuestion:
+                            EnterCommandLine(modifiers.HasFlag(ModifierKeys.Shift) ? '?' : '/'); // / and ? search
+                            return true;
+                        case Key.N:
+                            RepeatSearch(reverse: modifiers.HasFlag(ModifierKeys.Shift)); // n / N
+                            return true;
                         case Key.X:
                             if (modifiers.HasFlag(ModifierKeys.Shift)) // X
                             {
@@ -2416,6 +2450,116 @@ namespace Flow.Launcher.VimMode
                 ExecuteVisualMotion(target);
             else
                 ExecuteMotion(target);
+        }
+
+        // ----- Command-line mode (/ ? search and : commands) -----
+
+        private void EnterCommandLine(char prefix)
+        {
+            _cmdPrefix = prefix;
+            _cmdLine = "";
+            UpdateCommandLineDisplay();
+        }
+
+        private void ExitCommandLine()
+        {
+            _cmdLine = null;
+            if (_vimCommandLine != null) _vimCommandLine.Visibility = Visibility.Collapsed;
+        }
+
+        private void UpdateCommandLineDisplay()
+        {
+            if (_vimCommandLine == null) return;
+            _vimCommandLine.Text = _cmdPrefix + (_cmdLine ?? "");
+            _vimCommandLine.Visibility = Visibility.Visible;
+        }
+
+        private void ExecuteCommandLine(char prefix, string text)
+        {
+            try
+            {
+                if (prefix == '/' || prefix == '?')
+                {
+                    if (!string.IsNullOrEmpty(text)) { _lastSearch = text; _lastSearchBackward = prefix == '?'; }
+                    int from = _lastSearchBackward ? _queryTextBox.CaretIndex - 1 : _queryTextBox.CaretIndex + 1;
+                    FindNext(_lastSearch, _lastSearchBackward, from);
+                }
+                else if (prefix == ':')
+                {
+                    RunExCommand(text.Trim());
+                }
+            }
+            catch (Exception ex) { Flow.Launcher.Infrastructure.Logger.Log.Exception("VimManager", "Command line failed", ex); }
+        }
+
+        /// <summary>n / N: repeat the last search (N reverses direction).</summary>
+        private void RepeatSearch(bool reverse)
+        {
+            if (string.IsNullOrEmpty(_lastSearch)) return;
+            bool backward = _lastSearchBackward ^ reverse;
+            int from = backward ? _queryTextBox.CaretIndex - 1 : _queryTextBox.CaretIndex + 1;
+            FindNext(_lastSearch, backward, from);
+        }
+
+        /// <summary>Case-insensitive substring search with wrap-around; moves the caret to the match.</summary>
+        private void FindNext(string pattern, bool backward, int from)
+        {
+            if (string.IsNullOrEmpty(pattern)) return;
+            string text = _queryTextBox.Text;
+            if (text.Length == 0) return;
+            int idx;
+            if (!backward)
+            {
+                int start = Math.Max(0, Math.Min(from, text.Length));
+                idx = text.IndexOf(pattern, start, StringComparison.OrdinalIgnoreCase);
+                if (idx < 0) idx = text.IndexOf(pattern, 0, StringComparison.OrdinalIgnoreCase); // wrap to top
+            }
+            else
+            {
+                int start = Math.Max(0, Math.Min(from, text.Length - 1));
+                idx = text.LastIndexOf(pattern, start, StringComparison.OrdinalIgnoreCase);
+                if (idx < 0) idx = text.LastIndexOf(pattern, text.Length - 1, StringComparison.OrdinalIgnoreCase); // wrap to bottom
+            }
+            if (idx < 0) return;
+            _queryTextBox.CaretIndex = idx;
+            try
+            {
+                int line = 0;
+                for (int i = 0; i < idx && i < text.Length; i++) if (text[i] == '\n') line++;
+                _queryTextBox.ScrollToLine(line); // bring the match into view
+            }
+            catch { }
+            UpdateCaretPosition();
+        }
+
+        /// <summary>
+        /// A tiny ex-command set scoped to the editor: :w / :wq / :x send the buffer to the selected plugin;
+        /// :q closes the editor; :s/old/new/ (and :%s) replace text in the whole buffer (plain, not regex).
+        /// </summary>
+        private void RunExCommand(string cmd)
+        {
+            if (string.IsNullOrEmpty(cmd)) return;
+            if (cmd.StartsWith("%")) cmd = cmd.Substring(1);
+
+            if (cmd == "w" || cmd == "wq" || cmd == "x")
+            {
+                _multiLineBuffer = _queryTextBox.Text;
+                SaveDraft(_multiLineBuffer);
+                _viewModel.OpenResultCommand.Execute(null);
+                return;
+            }
+            if (cmd == "q" || cmd == "q!")
+            {
+                SetMultiLineMode(false);
+                return;
+            }
+            if (cmd.Length > 2 && cmd[0] == 's' && !char.IsLetterOrDigit(cmd[1]))
+            {
+                char sep = cmd[1];
+                var parts = cmd.Substring(2).Split(sep);
+                if (parts.Length >= 2 && !string.IsNullOrEmpty(parts[0]))
+                    SetText(_queryTextBox.Text.Replace(parts[0], parts[1]));
+            }
         }
 
         private void EnterVisualMode()
