@@ -70,6 +70,10 @@ namespace Flow.Launcher.VimMode
         private int _visualAnchor;
         private int _visualCaret;
         private int _count;
+        // Marks: m{a-z} stores the caret position; `{a-z} jumps to it exactly, '{a-z} to its line's first
+        // non-blank. _pendingMark holds the prefix ('m' set, '`' jump-exact, '\'' jump-line) awaiting a register.
+        private char _pendingMark;
+        private readonly System.Collections.Generic.Dictionary<char, int> _marks = new System.Collections.Generic.Dictionary<char, int>();
         private bool _gPending;
         private string _awaitingTextObject = "";
         private (int anchor, int caret)? _lastVisualRange;
@@ -1087,6 +1091,17 @@ namespace Flow.Launcher.VimMode
 
             if (_vimEngine.CurrentMode == VimModeType.Normal || _vimEngine.CurrentMode == VimModeType.Visual || _vimEngine.CurrentMode == VimModeType.VisualLine)
             {
+                // A mark prefix (m / ` / ') is pending — the next key is the register (a-z, 0-9).
+                if (_pendingMark != '\0')
+                {
+                    char prefix = _pendingMark;
+                    _pendingMark = '\0';
+                    char reg = GetCharFromKey(e.Key, modifiers);
+                    if (reg != '\0' && char.IsLetterOrDigit(reg)) HandleMark(prefix, reg);
+                    e.Handled = true;
+                    return true;
+                }
+
                 if (!string.IsNullOrEmpty(_awaitingCharCommand))
                 {
                     char c = GetCharFromKey(e.Key, modifiers);
@@ -1275,6 +1290,12 @@ namespace Flow.Launcher.VimMode
                                 _vimEngine.SwitchToInsert();
                             }
                             return true;
+                        case Key.M when modifiers == ModifierKeys.None:
+                            _pendingMark = 'm'; // m{a-z}: set a mark at the caret
+                            return true;
+                        case Key.OemQuotes when modifiers == ModifierKeys.None:
+                            _pendingMark = '\''; // '{a-z}: jump to the mark's line (first non-blank)
+                            return true;
                         case Key.OemTilde:
                             if (modifiers.HasFlag(ModifierKeys.Shift))
                             {
@@ -1289,7 +1310,8 @@ namespace Flow.Launcher.VimMode
                                 _lastChange = "~";
                                 return true;
                             }
-                            return false;
+                            _pendingMark = '`'; // `{a-z}: jump to the mark's exact position
+                            return true;
 
                         case Key.P:
                             if (modifiers.HasFlag(ModifierKeys.Shift))
@@ -2372,6 +2394,28 @@ namespace Flow.Launcher.VimMode
         {
             _visualCaret = targetCaret;
             UpdateVisualSelection();
+        }
+
+        /// <summary>
+        /// Handles a mark prefix + register: 'm' stores the caret under the register; '`' jumps to the stored
+        /// position exactly; '\'' jumps to the first non-blank of the stored position's line. Jumps go through
+        /// the normal motion path, so they extend a Visual selection and compose with a pending operator
+        /// (e.g. d`a). Positions are clamped to the current text length.
+        /// </summary>
+        private void HandleMark(char prefix, char reg)
+        {
+            if (prefix == 'm')
+            {
+                _marks[reg] = _queryTextBox.CaretIndex;
+                return;
+            }
+            if (!_marks.TryGetValue(reg, out int pos)) return;
+            pos = Math.Max(0, Math.Min(pos, _queryTextBox.Text.Length));
+            int target = prefix == '\'' ? VimMotionEngine.MoveFirstNonBlankOfLine(_queryTextBox.Text, pos) : pos;
+            if (_vimEngine.CurrentMode == VimModeType.Visual || _vimEngine.CurrentMode == VimModeType.VisualLine)
+                ExecuteVisualMotion(target);
+            else
+                ExecuteMotion(target);
         }
 
         private void EnterVisualMode()
