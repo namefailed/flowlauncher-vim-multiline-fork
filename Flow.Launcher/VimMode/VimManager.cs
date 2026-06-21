@@ -107,7 +107,9 @@ namespace Flow.Launcher.VimMode
                 // sits next to the small gutter; the 14px right padding leaves room for the scrollbar; the
                 // bottom padding clears the mode line.
                 _queryTextBox.Margin = new Thickness(0, 7, 0, 7);
-                _queryTextBox.Padding = new Thickness(GutterWidth, 6, 14, 32);
+                // Bottom inset is now reserved on the inner scroll-viewer (EnableEditorScrollbar), which holds
+                // it persistently while scrolling; the TextBox's own bottom Padding cannot.
+                _queryTextBox.Padding = new Thickness(GutterWidth, 6, 14, 8);
                 // Hard-cap the query-box Grid (textbox 220 + 7+7 margin = 234). The root content is a
                 // vertical StackPanel, which measures children with infinite height; under SizeToContent a
                 // fast paste can momentarily inflate the TextBox past its own MaxHeight before layout
@@ -174,11 +176,17 @@ namespace Flow.Launcher.VimMode
                 {
                     _editorScrollViewer.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
                     _editorScrollViewer.MaxHeight = 220; // pin the viewport; content scrolls inside
+                    // Shrink the scrolling viewport so it ends ABOVE the mode line (a persistent inset the
+                    // TextBox's bottom Padding can't provide once scrolled). This keeps the bottom line from
+                    // sliding under the mode line, and makes scroll-to-caret use the real visible height. The
+                    // small top inset gives the first line breathing room when scrolling up.
+                    _editorScrollViewer.Margin = new Thickness(0, 2, 0, 30);
                 }
                 else
                 {
                     _editorScrollViewer.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden; // template default
                     _editorScrollViewer.ClearValue(FrameworkElement.MaxHeightProperty);
+                    _editorScrollViewer.ClearValue(FrameworkElement.MarginProperty);
                 }
             }
 
@@ -461,6 +469,18 @@ namespace Flow.Launcher.VimMode
                         _vimBlockCaret.Width = Math.Max(rect.Width, 8);
                         _vimBlockCaret.Height = rect.Height;
                     }
+                    else if (!_caretRedrawPending)
+                    {
+                        // Right after a paste/edit the new caret position has no rect yet (layout still
+                        // pending), so the block caret would vanish until the next keypress. Retry once
+                        // layout settles.
+                        _caretRedrawPending = true;
+                        _mainWindow.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
+                        {
+                            _caretRedrawPending = false;
+                            UpdateCaretPosition();
+                        }));
+                    }
                 }
                 catch (Exception ex) { Flow.Launcher.Infrastructure.Logger.Log.Exception("VimManager", "Layout exception in UpdateCaretPosition", ex); }
             }
@@ -474,6 +494,7 @@ namespace Flow.Launcher.VimMode
 
         private System.Windows.Controls.Canvas _vimYankFlash;
         private int _yankFlashToken;
+        private bool _caretRedrawPending; // guards the deferred block-caret reposition after an edit
 
         /// <summary>
         /// Briefly highlights a just-yanked text range (like Neovim's on-yank flash) so the user gets
