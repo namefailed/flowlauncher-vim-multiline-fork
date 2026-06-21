@@ -101,15 +101,17 @@ namespace Flow.Launcher.VimMode
                 _queryTextBox.VerticalContentAlignment = VerticalAlignment.Top;
                 // Fixed editor size (MinHeight overrides the bound single-line Height; we never write the
                 // Height DP itself, which is TwoWay-bound to the persisted single-line query-box height).
-                _queryTextBox.MinHeight = 272;
-                _queryTextBox.MaxHeight = 272;
+                _queryTextBox.MinHeight = 240;
+                _queryTextBox.MaxHeight = 240;
                 // Drop the query box's 16px left margin (it reserved space for the search icon) so the text
-                // sits next to the small gutter; the 14px right padding leaves room for the scrollbar; the
-                // bottom padding clears the mode line.
-                _queryTextBox.Margin = new Thickness(0, 7, 0, 7);
-                // Bottom inset is now reserved on the inner scroll-viewer (EnableEditorScrollbar), which holds
-                // it persistently while scrolling; the TextBox's own bottom Padding cannot.
-                _queryTextBox.Padding = new Thickness(GutterWidth, 6, 14, 8);
+                // sits next to the small gutter; the 14px right padding leaves room for the scrollbar.
+                // The 32px BOTTOM MARGIN reserves the mode line below the TextBox: because it's the TextBox's
+                // own margin, GetRectFromCharacterIndex (and therefore the gutter) account for it, so the
+                // text and the line-number gutter occupy the exact same region — text fills top-to-mode-line
+                // with no inset, matching the gutter. (Reserving it on the inner viewer instead made the text
+                // shorter than the gutter, so numbers showed with no text beside them.)
+                _queryTextBox.Margin = new Thickness(0, 7, 0, 32);
+                _queryTextBox.Padding = new Thickness(GutterWidth, 4, 14, 4);
                 // Hard-cap the query-box Grid (textbox 220 + 7+7 margin = 234). The root content is a
                 // vertical StackPanel, which measures children with infinite height; under SizeToContent a
                 // fast paste can momentarily inflate the TextBox past its own MaxHeight before layout
@@ -117,7 +119,7 @@ namespace Flow.Launcher.VimMode
                 // deterministic ceiling the window can never exceed. Reverted on exit.
                 if (_queryBoxArea != null)
                 {
-                    _queryBoxArea.MaxHeight = 286; // textbox 272 + 7+7 margin
+                    _queryBoxArea.MaxHeight = 279; // textbox 240 + 7 top + 32 bottom margin
                     _queryBoxArea.ClipToBounds = true;
                 }
                 ApplyEditorChrome(true);        // also resolves _editorScrollViewer via HookEditorScroll
@@ -175,12 +177,11 @@ namespace Flow.Launcher.VimMode
                 if (editor)
                 {
                     _editorScrollViewer.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
-                    _editorScrollViewer.MaxHeight = 272; // pin the viewport; content scrolls inside
-                    // Shrink the scrolling viewport so it ends ABOVE the mode line (a persistent inset the
-                    // TextBox's bottom Padding can't provide once scrolled). This keeps the bottom line from
-                    // sliding under the mode line, and makes scroll-to-caret use the real visible height. The
-                    // small top inset gives the first line breathing room when scrolling up.
-                    _editorScrollViewer.Margin = new Thickness(0, 2, 0, 30);
+                    _editorScrollViewer.MaxHeight = 240; // pin the viewport; content scrolls inside
+                    // The viewer fills the TextBox with no inset: the mode-line gap is reserved on the
+                    // TextBox's own bottom margin, so the text and the gutter (which reads
+                    // GetRectFromCharacterIndex) stay aligned and fill the same region.
+                    _editorScrollViewer.Margin = new Thickness(0);
                     // Slim, thumb-only scrollbar (scoped to this viewer only).
                     if (_mainWindow.TryFindResource("VimEditorScrollBarStyle") is Style slim)
                         _editorScrollViewer.Resources[typeof(System.Windows.Controls.Primitives.ScrollBar)] = slim;
