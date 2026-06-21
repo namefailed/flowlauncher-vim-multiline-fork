@@ -82,6 +82,10 @@ namespace Flow.Launcher.VimMode
         // Crash/restart-safe draft of the editor buffer: debounce-written to disk while editing, restored on
         // the first editor open of a fresh process so a crash or reboot can't lose a half-written entry.
         private bool _draftRestored;
+        // Editor conveniences (wired to settings later; default on). Auto-indent carries a line's leading
+        // whitespace onto the next; auto-pair inserts the closing bracket/quote and skips over it.
+        private bool _autoIndent = true;
+        private bool _autoPair = true;
         private readonly object _draftLock = new object();
         private System.Windows.Threading.DispatcherTimer _draftTimer;
         private static readonly string DraftPath = System.IO.Path.Combine(
@@ -909,8 +913,21 @@ namespace Flow.Launcher.VimMode
                 && !modifiers.HasFlag(ModifierKeys.Control) && !modifiers.HasFlag(ModifierKeys.Alt))
             {
                 int c = _queryTextBox.CaretIndex;
-                SetText(_queryTextBox.Text.Insert(c, "\n"));
-                _queryTextBox.CaretIndex = Math.Min(c + 1, _queryTextBox.Text.Length);
+                string text = _queryTextBox.Text;
+                // Auto-indent: carry the current line's leading whitespace onto the new line. (When the line
+                // has no indent — typical prose — this is just a plain "\n", so it never gets in the way.)
+                string indent = "";
+                if (_autoIndent)
+                {
+                    int lineStart = c;
+                    while (lineStart > 0 && text[lineStart - 1] != '\n') lineStart--;
+                    int ws = lineStart;
+                    while (ws < c && (text[ws] == ' ' || text[ws] == '\t')) ws++;
+                    indent = text.Substring(lineStart, ws - lineStart);
+                }
+                string ins = "\n" + indent;
+                SetText(text.Insert(c, ins));
+                _queryTextBox.CaretIndex = Math.Min(c + ins.Length, _queryTextBox.Text.Length);
                 e.Handled = true;
                 return true;
             }
@@ -975,6 +992,25 @@ namespace Flow.Launcher.VimMode
                     _lastEscapeTime = DateTime.Now;
                     e.Handled = true;
                     return true;
+                }
+                // Auto-pair: Backspace with the caret between an empty pair deletes both sides.
+                if (_autoPair && _multiLineMode && e.Key == Key.Back && modifiers == ModifierKeys.None)
+                {
+                    int c = _queryTextBox.CaretIndex;
+                    string text = _queryTextBox.Text;
+                    if (c > 0 && c < text.Length)
+                    {
+                        char l = text[c - 1], r = text[c];
+                        bool emptyPair = (l == '(' && r == ')') || (l == '[' && r == ']') || (l == '{' && r == '}')
+                                         || (l == '"' && r == '"') || (l == '\'' && r == '\'');
+                        if (emptyPair)
+                        {
+                            _queryTextBox.SetCurrentValue(System.Windows.Controls.TextBox.TextProperty, text.Remove(c - 1, 2));
+                            _queryTextBox.CaretIndex = c - 1;
+                            e.Handled = true;
+                            return true;
+                        }
+                    }
                 }
             }
             else
@@ -2483,7 +2519,62 @@ namespace Flow.Launcher.VimMode
             if (_settings.EnableVimMode && _vimEngine.CurrentMode != VimModeType.Insert)
             {
                 e.Handled = true;
+                return;
             }
+            // Auto-pair brackets/quotes while typing in the editor.
+            if (_autoPair && _multiLineMode && _vimEngine.CurrentMode == VimModeType.Insert
+                && e.Text != null && e.Text.Length == 1 && TryAutoPair(e.Text[0]))
+            {
+                e.Handled = true;
+            }
+        }
+
+        /// <summary>
+        /// Auto-pairing for the editor. On an opening ( [ { it inserts the matching close and parks the caret
+        /// between; on a quote " ' it pairs only when not extending a word (so apostrophes in prose are left
+        /// alone); typing a close char when it's already to the right just steps over it. Returns true if it
+        /// handled the keystroke (caller should mark the event handled). Does not push a Vim undo snapshot, so
+        /// the whole insert session still undoes as one with `u`.
+        /// </summary>
+        private bool TryAutoPair(char ch)
+        {
+            const string opens = "([{";
+            const string closes = ")]}";
+            string text = _queryTextBox.Text;
+            int c = _queryTextBox.CaretIndex;
+            char rightOf = c < text.Length ? text[c] : '\0';
+
+            void InsertPair(string pair)
+            {
+                _queryTextBox.SetCurrentValue(System.Windows.Controls.TextBox.TextProperty, text.Insert(c, pair));
+                _queryTextBox.CaretIndex = c + 1; // between the pair
+            }
+
+            // Step over an existing close char ) ] } or a closing quote.
+            if ((closes.IndexOf(ch) >= 0 || ch == '"' || ch == '\'') && rightOf == ch)
+            {
+                _queryTextBox.CaretIndex = c + 1;
+                return true;
+            }
+            // Opening bracket -> insert the matching pair.
+            int oi = opens.IndexOf(ch);
+            if (oi >= 0)
+            {
+                InsertPair(ch.ToString() + closes[oi]);
+                return true;
+            }
+            // Quote -> pair only when starting fresh (not right after a word char, so "don't" stays intact).
+            if (ch == '"' || ch == '\'')
+            {
+                char leftOf = c > 0 ? text[c - 1] : '\0';
+                bool afterWord = char.IsLetterOrDigit(leftOf);
+                if (!afterWord && !char.IsLetterOrDigit(rightOf))
+                {
+                    InsertPair(new string(ch, 2));
+                    return true;
+                }
+            }
+            return false; // let WPF insert the character normally
         }
 
         /// <summary>
