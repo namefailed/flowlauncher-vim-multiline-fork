@@ -719,8 +719,11 @@ namespace Flow.Launcher.VimMode
                 else
                 {
                     // Hiding: capture the latest editor text. Both buffers persist across hide/show so
-                    // neither mode loses its content.
-                    if (_multiLineMode) _multiLineBuffer = _queryTextBox.Text;
+                    // neither mode loses its content. Read the view-model's QueryText (a plain string kept in
+                    // sync with the box), NOT _queryTextBox.Text — MainWindowVisibilityStatus can change on a
+                    // background thread (Hide() runs off the UI thread), and touching the TextBox there throws
+                    // a cross-thread exception that silently crashes the app.
+                    if (_multiLineMode) _multiLineBuffer = _viewModel.QueryText ?? "";
                 }
             }
         }
