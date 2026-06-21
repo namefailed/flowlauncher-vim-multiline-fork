@@ -60,9 +60,11 @@ Unit tests live in [`Flow.Launcher.Test`](../../Flow.Launcher.Test) (`VimEngineT
 - `s` / `S` — substitute the character / whole query, then enter Insert
 - `r{char}` — replace the character(s) under the cursor with `{char}`
 - `~` — toggle the case of the character under the cursor
+- `Ctrl+A` / `Ctrl+X` — increment / decrement the number at or after the cursor (count-aware)
 - `gu` / `gU` — lowercase / uppercase (operator + motion, e.g. `guw`)
-- `dd` / `cc` — delete / change the whole query
+- `dd` / `cc` — delete / change the whole query (current line in the editor; `3dd` for several)
 - `D` / `C` — delete / change from the cursor to the end
+- `J` / `gJ` — (editor) join the current line with the next, with / without a space
 - `Y` — yank the whole query · `p` — paste after the cursor
 - `u` — undo the last operation · `Ctrl+R` — redo
 - Yanking (`y{motion}`, `yy`, `yj`/`yk`, `Y`, Visual `y`) briefly flashes a highlight over the copied text as confirmation.
@@ -70,8 +72,9 @@ Unit tests live in [`Flow.Launcher.Test`](../../Flow.Launcher.Test) (`VimEngineT
 ### Operators + text objects
 Use a text object after an operator (`d`, `c`, `y`, `gu`, …):
 - modifiers: `i` (inner), `a` (around)
-- targets: `w` (word), `"` `'` (quotes), `(` `[` `{` (brackets)
-- examples: `diw` (delete inner word), `ci"` (change inside quotes), `ya(` (yank around parens)
+- targets: `w` (word), `"` `'` (quotes), `(` `[` `{` (brackets); `b` = `(` and `B` = `{` aliases
+- counts: `2daw` / `3iw` extend word objects through additional words
+- examples: `diw` (delete inner word), `ci"` (change inside quotes), `ya(` / `yab` (yank around parens)
 
 ### Repeat & counts
 - `.` — repeat the last change (e.g. `x`, `dw`, `r{char}`, `p`).

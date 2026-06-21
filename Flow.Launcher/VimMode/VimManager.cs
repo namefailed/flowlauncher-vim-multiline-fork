@@ -19,6 +19,9 @@ namespace Flow.Launcher.VimMode
         // Tracks the last yank/delete so p/P can paste line-wise (yy/dd/Visual Line) vs char-wise.
         private string _lastYankText;
         private bool _lastYankLinewise;
+        // Last line-wise operator (dj/dk/cj/ck/yj/yk) extent + direction, so '.' can repeat it.
+        private int _lastLineCount = 1;
+        private bool _lastLineDown = true;
 
         private void SetClipboardText(string text)
         {
@@ -692,6 +695,22 @@ namespace Flow.Launcher.VimMode
                 return true;
             }
 
+            // Ctrl-A / Ctrl-X increment / decrement the number at or after the cursor (count-aware).
+            // Normal mode only, so Insert-mode Ctrl-A (select all) is unaffected.
+            if (modifiers.HasFlag(ModifierKeys.Control) && !modifiers.HasFlag(ModifierKeys.Alt)
+                && _vimEngine.CurrentMode == VimModeType.Normal && (e.Key == Key.A || e.Key == Key.X))
+            {
+                int delta = (e.Key == Key.A ? 1 : -1) * Math.Max(1, GetCount());
+                var (found, newText, newCaret) = VimMotionEngine.ChangeNumber(_queryTextBox.Text, _queryTextBox.CaretIndex, delta);
+                if (found)
+                {
+                    SetText(newText);
+                    _queryTextBox.CaretIndex = Math.Min(newCaret, newText.Length);
+                }
+                e.Handled = true;
+                return true;
+            }
+
             // In multi-line mode j/k move between lines, so result navigation lives on Ctrl+J/Ctrl+K.
             if (_multiLineMode && modifiers.HasFlag(ModifierKeys.Control) && !modifiers.HasFlag(ModifierKeys.Alt)
                 && _vimEngine.CurrentMode != VimModeType.Insert)
@@ -827,6 +846,9 @@ namespace Flow.Launcher.VimMode
                 case VimModeType.Normal:
                     switch (e.Key)
                     {
+                        case Key.J when modifiers.HasFlag(ModifierKeys.Shift) && _multiLineMode && !IsLineOperatorPending():
+                            JoinLines(GetCount(), withSpace: true); // J — join the current line with the next
+                            return true;
                         case Key.J:
                             if (_multiLineMode && IsLineOperatorPending())
                                 ApplyLinewiseOperator(down: true);
@@ -874,12 +896,17 @@ namespace Flow.Launcher.VimMode
                             ExecuteMotion(VimMotionEngine.MoveToMatchingBracket(_queryTextBox.Text, _queryTextBox.CaretIndex), MotionInclusivity.InclusivePair);
                             return true;
                         case Key.G:
-                            // Shift+G -> jump to the last line (G). Plain 'g' is the prefix for
-                            // multi-key commands (gg, gu, gU, g~, gv, g_).
+                            // Shift+G -> last line (G), or line {count} with a count (5G). Plain 'g' is the
+                            // prefix for multi-key commands (gg, gu, gU, g~, gv, g_).
                             if (modifiers.HasFlag(ModifierKeys.Shift))
                             {
                                 if (_multiLineMode)
-                                    ExecuteMotion(VimMotionEngine.GetLineStart(_queryTextBox.Text, _queryTextBox.Text.Length));
+                                {
+                                    int line = _count > 0 ? GetCount() : 0;
+                                    ExecuteMotion(line >= 1
+                                        ? StartOfLineNumber(_queryTextBox.Text, line)
+                                        : VimMotionEngine.GetLineStart(_queryTextBox.Text, _queryTextBox.Text.Length));
+                                }
                             }
                             else if (modifiers == ModifierKeys.None)
                             {
@@ -1030,8 +1057,21 @@ namespace Flow.Launcher.VimMode
                             {
                                 // Single source of truth for the mode difference: whole query in
                                 // single-line mode, current line in multi-line mode (cc keeps the line).
-                                var (ls, le) = VimMotionEngine.LineOperatorRange(
-                                    _queryTextBox.Text, _queryTextBox.CaretIndex, _multiLineMode, includeLineBreak: cmd != "c");
+                                // A count (3dd / 2yy) extends over that many lines in the editor.
+                                int lineCount = _multiLineMode ? Math.Max(1, GetCount()) : 1;
+                                int ls, le;
+                                if (_multiLineMode && lineCount > 1)
+                                {
+                                    int target = _queryTextBox.CaretIndex;
+                                    for (int i = 1; i < lineCount; i++)
+                                        target = VimMotionEngine.MoveDown(_queryTextBox.Text, target);
+                                    (ls, le) = VimMotionEngine.GetLinewiseRange(_queryTextBox.Text, _queryTextBox.CaretIndex, target);
+                                }
+                                else
+                                {
+                                    (ls, le) = VimMotionEngine.LineOperatorRange(
+                                        _queryTextBox.Text, _queryTextBox.CaretIndex, _multiLineMode, includeLineBreak: cmd != "c");
+                                }
                                 if (le > ls)
                                     SetClipboardText(_queryTextBox.Text.Substring(ls, le - ls));
                                 _lastYankLinewise = _multiLineMode; // dd/cc/yy is line-wise in the editor
@@ -1070,7 +1110,10 @@ namespace Flow.Launcher.VimMode
                         case Key.I when modifiers.HasFlag(ModifierKeys.Shift):
                             PushUndo();
                             _vimEngine.SwitchToInsert();
-                            _queryTextBox.CaretIndex = 0;
+                            // Start of the current line in the editor; start of the whole query otherwise.
+                            _queryTextBox.CaretIndex = _multiLineMode
+                                ? VimMotionEngine.GetLineStart(_queryTextBox.Text, _queryTextBox.CaretIndex)
+                                : 0;
                             return true;
                         case Key.A when modifiers == ModifierKeys.None && _pendingCommand == "":
                             PushUndo();
@@ -1083,7 +1126,10 @@ namespace Flow.Launcher.VimMode
                         case Key.A when modifiers.HasFlag(ModifierKeys.Shift):
                             PushUndo();
                             _vimEngine.SwitchToInsert();
-                            _queryTextBox.CaretIndex = _queryTextBox.Text.Length;
+                            // End of the current line in the editor; end of the whole query otherwise.
+                            _queryTextBox.CaretIndex = _multiLineMode
+                                ? VimMotionEngine.GetLineEnd(_queryTextBox.Text, _queryTextBox.CaretIndex)
+                                : _queryTextBox.Text.Length;
                             return true;
                         case Key.V:
                             if (modifiers.HasFlag(ModifierKeys.Shift))
@@ -1338,6 +1384,19 @@ namespace Flow.Launcher.VimMode
                                 _vimEngine.SwitchToNormal();
                             }
                             return true;
+                        case Key.J when modifiers.HasFlag(ModifierKeys.Shift) && _multiLineMode:
+                            {
+                                // Visual-Line J joins all the selected lines.
+                                var (js, je) = VisualLineRange();
+                                _queryTextBox.CaretIndex = Math.Min(js, _queryTextBox.Text.Length);
+                                int lines = 1;
+                                for (int i = js; i < je && i < _queryTextBox.Text.Length; i++)
+                                    if (_queryTextBox.Text[i] == '\n') lines++;
+                                JoinLines(lines, withSpace: true);
+                                _queryTextBox.SelectionLength = 0;
+                                _vimEngine.SwitchToNormal();
+                            }
+                            return true;
                         case Key.J:
                             if (_multiLineMode)
                             {
@@ -1371,15 +1430,20 @@ namespace Flow.Launcher.VimMode
                     switch (e.Key)
                     {
                         case Key.G when modifiers == ModifierKeys.None && _multiLineMode:
-                            // gg -> document start. Multi-line only; in single-line mode 'gg' stays a
-                            // no-op (matching the single-line fork), since '0' already goes to the start.
-                            ExecuteMotion(0);
+                            // gg -> document start, or line {count} with a count (5gg). Multi-line only.
+                            {
+                                int line = _count > 0 ? GetCount() : 0;
+                                ExecuteMotion(line >= 1 ? StartOfLineNumber(_queryTextBox.Text, line) : 0);
+                            }
                             return true;
                         case Key.OemMinus when modifiers.HasFlag(ModifierKeys.Shift):
                             ExecuteMotion(VimMotionEngine.MoveLastNonBlank(_queryTextBox.Text));
                             return true;
                         case Key.T when modifiers.HasFlag(ModifierKeys.Shift):
                             _pendingCommand = "~";
+                            return true;
+                        case Key.J when _multiLineMode:
+                            JoinLines(GetCount(), withSpace: false); // gJ — join without inserting a space
                             return true;
                         case Key.U when modifiers == ModifierKeys.None:
                             _pendingCommand = "gu";
@@ -1433,8 +1497,10 @@ namespace Flow.Launcher.VimMode
             _awaitingTextObject = "";
 
             char delim = GetCharFromKey(e.Key, modifiers);
-            if (delim == '\0' && e.Key != Key.W) return true;
+            if (delim == '\0' && e.Key != Key.W && e.Key != Key.B) return true;
             if (e.Key == Key.W) delim = 'w';
+            // Vim block-object aliases: ib/ab == i(/a(  and  iB/aB == i{/a{
+            if (e.Key == Key.B) delim = modifiers.HasFlag(ModifierKeys.Shift) ? 'B' : 'b';
 
             string text = _queryTextBox.Text;
             int caret = (_vimEngine.CurrentMode == VimModeType.Visual) ? _visualCaret : _queryTextBox.CaretIndex;
@@ -1454,6 +1520,7 @@ namespace Flow.Launcher.VimMode
                     break;
                 case '(':
                 case ')':
+                case 'b':
                     range = VimMotionEngine.TextObjectDelimited(text, caret, '(', ')', around);
                     break;
                 case '[':
@@ -1462,6 +1529,7 @@ namespace Flow.Launcher.VimMode
                     break;
                 case '{':
                 case '}':
+                case 'B':
                     range = VimMotionEngine.TextObjectDelimited(text, caret, '{', '}', around);
                     break;
                 default:
@@ -1469,6 +1537,20 @@ namespace Flow.Launcher.VimMode
             }
 
             if (range.start < 0) return true;
+
+            // Counted word text objects (2aw / 3iw) extend the range through additional words.
+            int toCount = Math.Max(1, GetCount());
+            if (toCount > 1 && delim == 'w')
+            {
+                int wEnd = range.end;
+                for (int k = 1; k < toCount; k++)
+                {
+                    var next = VimMotionEngine.TextObjectWord(text, wEnd + 1, around);
+                    if (next.start < 0 || next.end <= wEnd) break;
+                    wEnd = next.end;
+                }
+                range.end = wEnd;
+            }
 
             if (_vimEngine.CurrentMode == VimModeType.Visual)
             {
@@ -1535,6 +1617,12 @@ namespace Flow.Launcher.VimMode
         {
             switch (_lastChange)
             {
+                case "J":
+                    JoinLines(_count > 0 ? GetCount() : 1, withSpace: true);
+                    break;
+                case "gJ":
+                    JoinLines(_count > 0 ? GetCount() : 1, withSpace: false);
+                    break;
                 case "dd":
                     SetClipboardText(_queryTextBox.Text);
                     SetText("");
@@ -1614,6 +1702,32 @@ namespace Flow.Launcher.VimMode
                             _queryTextBox.CaretIndex = c;
                         }
                         _vimEngine.SwitchToInsert();
+                    }
+                    break;
+                case "d_lines":
+                case "c_lines":
+                case "y_lines":
+                    {
+                        // Replay dj/dk/cj/ck/yj/yk line-wise from the current caret (count-aware).
+                        int cnt = _count > 0 ? GetCount() : Math.Max(1, _lastLineCount);
+                        string t = _queryTextBox.Text;
+                        int caret = _queryTextBox.CaretIndex;
+                        int target = caret;
+                        for (int i = 0; i < cnt; i++)
+                            target = _lastLineDown ? VimMotionEngine.MoveDown(t, target) : VimMotionEngine.MoveUp(t, target);
+                        var (ls, le) = VimMotionEngine.GetLinewiseRange(t, caret, target);
+                        if (le > ls)
+                        {
+                            SetClipboardText(t.Substring(ls, le - ls));
+                            _lastYankLinewise = true;
+                            if (_lastChange != "y_lines")
+                            {
+                                SetText(t.Remove(ls, le - ls));
+                                _queryTextBox.CaretIndex = Math.Min(ls, _queryTextBox.Text.Length);
+                            }
+                            else FlashYank(ls, le - ls);
+                        }
+                        if (_lastChange == "c_lines") _vimEngine.SwitchToInsert();
                     }
                     break;
                 case "s":
@@ -1722,7 +1836,62 @@ namespace Flow.Launcher.VimMode
             if (_pendingCommand == "c")
                 _vimEngine.SwitchToInsert();
             _lastChange = _pendingCommand + "_lines";
+            _lastLineCount = n;
+            _lastLineDown = down;
             _pendingCommand = "";
+        }
+
+        /// <summary>
+        /// Vim J / gJ: joins the current line with the following line(s). With a count, joins that many
+        /// lines (NJ does N-1 joins; bare J joins 2 lines). <paramref name="withSpace"/> true = J (collapse
+        /// the break + the next line's leading whitespace to a single space); false = gJ (just delete the
+        /// break, keeping all other characters). The caret lands at the join point.
+        /// </summary>
+        private void JoinLines(int count, bool withSpace)
+        {
+            string text = _queryTextBox.Text;
+            int caret = _queryTextBox.CaretIndex;
+            int joins = count <= 1 ? 1 : count - 1;
+            int newCaret = caret;
+            for (int j = 0; j < joins; j++)
+            {
+                int nl = text.IndexOf('\n', Math.Min(Math.Max(caret, 0), text.Length));
+                if (nl < 0) break; // nothing below to join
+                int removeStart = nl;
+                if (removeStart > 0 && text[removeStart - 1] == '\r') removeStart--; // swallow CRLF's \r
+                int removeEnd = nl + 1;
+                if (withSpace)
+                {
+                    while (removeEnd < text.Length && (text[removeEnd] == ' ' || text[removeEnd] == '\t')) removeEnd++;
+                    bool prevIsSpace = removeStart > 0 && (text[removeStart - 1] == ' ' || text[removeStart - 1] == '\t');
+                    string sep = (prevIsSpace || removeStart == 0) ? "" : " ";
+                    text = text.Substring(0, removeStart) + sep + text.Substring(removeEnd);
+                }
+                else
+                {
+                    text = text.Substring(0, removeStart) + text.Substring(removeEnd);
+                }
+                newCaret = removeStart;
+                caret = removeStart;
+            }
+            SetText(text);
+            _queryTextBox.CaretIndex = Math.Min(newCaret, _queryTextBox.Text.Length);
+            _lastChange = withSpace ? "J" : "gJ";
+        }
+
+        /// <summary>Returns the start index of the 1-based <paramref name="line"/>, clamped to the last line.</summary>
+        private static int StartOfLineNumber(string text, int line)
+        {
+            if (line <= 1) return 0;
+            int idx = 0, current = 1;
+            while (current < line)
+            {
+                int nl = text.IndexOf('\n', idx);
+                if (nl < 0) return idx; // fewer lines than asked -> start of the last line
+                idx = nl + 1;
+                current++;
+            }
+            return Math.Min(idx, text.Length);
         }
 
         /// <summary>

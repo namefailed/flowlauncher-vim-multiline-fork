@@ -238,9 +238,15 @@ operators understand real line breaks. All are CRLF-tolerant and unit-tested in 
 - `MoveFirstNonBlankOfLine(text, caret)` — for `^`
 
 **Keys gated to multi-line mode** (they keep their single-line behaviour when the editor is off): `0` `^` `$`
-operate on the current line rather than the whole query; `gg`/`G` (top/bottom) are bound; `o`/`O` open a line
-below/above and enter Insert; `dd`/`cc` and line-wise `dj`/`dk` act on whole lines; Visual-Line selects whole
-lines instead of the whole buffer.
+operate on the current line rather than the whole query; `gg`/`G` (top/bottom, count-aware: `5G`/`5gg` jump to
+line 5) are bound; `I`/`A` go to the start/end of the **current line** (not the whole buffer); `o`/`O` open a
+line below/above and enter Insert; `dd`/`cc`/`yy` act on whole lines and take a count (`3dd`); line-wise
+`dj`/`dk` (and `cj`/`yk`, etc.) act on whole lines and are `.`-repeatable; `J`/`gJ` join the current line with
+the next (with / without a space; count-aware; also from Visual-Line); Visual-Line selects whole lines instead
+of the whole buffer.
+
+`Ctrl-A`/`Ctrl-X` (increment/decrement the number at the cursor), the `ib`/`aB` block-object aliases, and
+counted word text objects (`2daw`) work in both modes and are shared with the single-line fork.
 
 ---
 
