@@ -256,7 +256,41 @@ namespace Flow.Launcher.VimMode
                 _editorScrollViewer.ScrollChanged += OnEditorScrolled;
         }
 
-        private void OnEditorScrolled(object sender, System.Windows.Controls.ScrollChangedEventArgs e) => RedrawLineNumbers();
+        private bool _snappingScroll;
+
+        private void OnEditorScrolled(object sender, System.Windows.Controls.ScrollChangedEventArgs e)
+        {
+            SnapScrollToLine();
+            RedrawLineNumbers();
+        }
+
+        /// <summary>
+        /// Snaps the editor's vertical scroll to a whole-line boundary so the top line is never shown
+        /// half-off. This keeps the rendered text aligned with the line-number gutter (one number per
+        /// visible line) — without it, a partial top line gets a number but no visible text.
+        /// </summary>
+        private void SnapScrollToLine()
+        {
+            if (_snappingScroll || _editorScrollViewer == null || !_multiLineMode) return;
+            double lineH = EditorLineHeight();
+            if (lineH <= 1) return;
+            double off = _editorScrollViewer.VerticalOffset;
+            double snapped = Math.Round(off / lineH) * lineH;
+            if (Math.Abs(snapped - off) > 0.5)
+            {
+                _snappingScroll = true;
+                try { _editorScrollViewer.ScrollToVerticalOffset(snapped); }
+                finally { _snappingScroll = false; }
+            }
+        }
+
+        /// <summary>Best-effort editor line height, measured from an on-screen line (caret, else line 0).</summary>
+        private double EditorLineHeight()
+        {
+            var r = _queryTextBox.GetRectFromCharacterIndex(_queryTextBox.CaretIndex);
+            if (r.IsEmpty || r.Height <= 1) r = _queryTextBox.GetRectFromCharacterIndex(0);
+            return (!r.IsEmpty && r.Height > 1) ? r.Height : 0;
+        }
 
         private static System.Windows.Controls.ScrollViewer FindDescendantScrollViewer(DependencyObject root)
         {
@@ -293,7 +327,10 @@ namespace Flow.Launcher.VimMode
                 for (int ln = 1; ; ln++)
                 {
                     var rect = _queryTextBox.GetRectFromCharacterIndex(idx);
-                    if (!rect.IsEmpty && rect.Bottom >= 0 && rect.Top <= viewHeight)
+                    // Only number a line whose TOP is within the viewport, so the gutter matches the text:
+                    // a line scrolled half-off the top (top above 0) is not rendered by the TextBox, so it
+                    // must not get a number either. Scroll snapping keeps the top line whole (top ~= 0).
+                    if (!rect.IsEmpty && rect.Top >= -1 && rect.Top < viewHeight)
                     {
                         var tb = new System.Windows.Controls.TextBlock
                         {
