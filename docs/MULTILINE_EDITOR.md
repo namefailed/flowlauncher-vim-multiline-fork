@@ -314,16 +314,19 @@ These were layered on top of the core editor; all live in `VimManager.cs` unless
   `Enter` handler carries the line's leading whitespace. Both gated by `Settings.VimEditorAutoPair/AutoIndent`.
 - **Settings** — `Settings.EnableVimMultiLineEditor` (gates `Ctrl+Enter`), `VimEditorVisibleLines`
   (drives `_editorTextHeight`), `VimEditorAutoPair`, `VimEditorAutoIndent`, surfaced in `SettingsPaneGeneral.xaml`.
-- **Search** — `/` `?` enter command-line mode; `ExecuteCommandLine` runs `FindNext` (case-insensitive,
-  wrap-around, scrolls the match into view); `n`/`N` via `RepeatSearch`.
+- **Search** — `/` `?` enter command-line mode; `ExecuteCommandLine` runs `FindNext`, which compiles the
+  pattern via `BuildRegex` (regex, `SmartCaseIgnore` case folding, literal fallback on a parse error) and
+  wraps around (`LastMatchIndex` walks backwards); `n`/`N` via `RepeatSearch`.
 - **Command-line** — `EnterCommandLine`/`UpdateCommandLineDisplay` render `prefix + text` in the mode line
-  (`VimCommandLine`); `RunExCommand` handles `:w`/`:wq`/`:x` (send), `:q` (close), `:s///` & `:%s///` (buffer
-  replace, plain text).
+  (`VimCommandLine`); `RunExCommand` handles `:w`/`:wq`/`:x` (send), `:q` (close). `Substitute` does
+  `:s`/`:%s` — regex per line (current line, or every line for `%`), flags `g`/`i`/`I`, .NET replacement syntax.
 - **Marks** — `_marks` dictionary; `m`/`` ` ``/`'` set the `_pendingMark` prefix, the next key is the register,
   `HandleMark` stores/jumps (jumps go through `ExecuteMotion`, so they compose with operators).
 - **Visual-block** — `VimModeType.VisualBlock`; entered by Normal/Visual `Ctrl-V`. The block is drawn by the
-  `VimBlockSelection` overlay (`UpdateBlockSelection`, one rect per row). `BlockYank`/`BlockDelete` operate on
-  the column span; `BlockInsert` + `CommitBlockInsert` replicate `Shift+I`/`Shift+A` typing across rows on Esc.
+  `VimBlockSelection` overlay (`UpdateBlockSelection`, one rect per row); `BlockColEnd` gives each row's right
+  edge, honoring the `_blockToEol` ($) flag. `h/l/j/k/0/$/w/b/e` move the corner; `BlockYank`/`BlockDelete`
+  operate on the column span; `BlockInsert` + `CommitBlockInsert` replicate `Shift+I`/`Shift+A` typing across
+  rows on Esc (I skips short rows, A pads them, `$`-A appends at each row's own end).
 
 ---
 

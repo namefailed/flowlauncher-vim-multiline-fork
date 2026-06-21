@@ -56,7 +56,9 @@ Unit tests live in [`Flow.Launcher.Test`](../../Flow.Launcher.Test) (`VimEngineT
 - `%` — jump to the matching bracket
 
 ### Search & marks
-- `/{pat}` / `?{pat}` — search forward / backward (case-insensitive, wraps); `n` / `N` repeat same / opposite.
+- `/{pat}` / `?{pat}` — search forward / backward; `n` / `N` repeat same / opposite. The pattern is a regex
+  (an invalid one falls back to a literal match), smart-case (case-insensitive unless it contains an uppercase
+  letter), and wraps around.
 - `m{a-z}` — set a mark · `` `{a-z} `` — jump to its exact spot · `'{a-z}` — jump to its line. Composes with
   operators (e.g. `` d`a ``).
 
@@ -100,16 +102,22 @@ Use a text object after an operator (`d`, `c`, `y`, `gu`, …):
 
 ## Visual Block mode (`Ctrl-V`, editor)
 
-- A rectangular column selection. `h` / `l` change the column, `j` / `k` the rows, `0` / `$` the line ends.
+- A rectangular column selection. `h` / `l` change the column, `j` / `k` the rows, `w` / `b` / `e` (and
+  `W` / `B` / `E`) move the corner by words, `0` jumps to column 0, and `$` makes the block run to each row's
+  own end (a ragged right edge).
 - `y` yanks the block (rows joined by newlines), `d` / `x` deletes the columns, `c` changes them.
 - `Shift+I` / `Shift+A` insert before / append after the block on **every** selected row — type once on the
-  top row and it's copied to the rest on `Esc`.
+  top row and it's copied to the rest on `Esc`. Like Vim, `Shift+I` skips rows shorter than the column,
+  `Shift+A` pads short rows with spaces, and after `$` a `Shift+A` appends at each row's own end.
 - `Ctrl-V` again or `Esc` returns to Normal. (`Ctrl-V` in Insert mode still pastes.)
 
 ## Command-line (`:`, editor)
 
 - `:w` / `:wq` / `:x` — send the buffer to the selected result (plugin); `:q` — leave the editor.
-- `:s/old/new/` (and `:%s/old/new/`) — replace text across the whole buffer (plain text, not regex).
+- `:s/pat/rep/[flags]` — substitute on the current line; `:%s/pat/rep/[flags]` over the whole buffer. `pat`
+  is a regex (smart-case; an invalid pattern falls back to a literal match) and `rep` uses .NET syntax (`$1`
+  for groups, `$&` for the whole match). Flags: `g` (every match on a line, not just the first), `i` / `I`
+  (force ignore- / match-case).
 
 ## Editor conveniences
 

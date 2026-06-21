@@ -88,6 +88,10 @@ namespace Flow.Launcher.VimMode
         private System.Collections.Generic.List<int> _blockRows;
         private int _blockInsertCol;
         private int _blockInsertStart;
+        private bool _blockToEol;           // $ pressed in block mode: the block runs to each row's own end
+        private bool _blockInsertAtEol;     // block A on a $-block: append at each row's own end
+        private bool _blockInsertPad;       // block A: pad rows shorter than the column with spaces
+        private bool _blockInsertSkipShort; // block I: skip rows shorter than the column
         private bool _gPending;
         private string _awaitingTextObject = "";
         private (int anchor, int caret)? _lastVisualRange;
@@ -1768,23 +1772,28 @@ namespace Flow.Launcher.VimMode
                             BlockMove(VimMotionEngine.MoveUp(_queryTextBox.Text, _visualCaret));
                             return true;
                         case Key.D0:
+                            _blockToEol = false;
                             BlockMove(VimMotionEngine.GetLineStart(_queryTextBox.Text, _visualCaret));
                             return true;
-                        case Key.D4 when modifiers.HasFlag(ModifierKeys.Shift): // $ -> end of the current line
+                        case Key.D4 when modifiers.HasFlag(ModifierKeys.Shift): // $ -> block runs to each row's end
+                            _blockToEol = true;
                             BlockMove(Math.Max(VimMotionEngine.GetLineStart(_queryTextBox.Text, _visualCaret),
                                                VimMotionEngine.GetLineEnd(_queryTextBox.Text, _visualCaret) - 1));
                             return true;
                         case Key.W: // w / W: forward a word / WORD (the block reshapes to the new corner)
+                            _blockToEol = false;
                             BlockMove(modifiers.HasFlag(ModifierKeys.Shift)
                                 ? VimMotionEngine.MoveNextWordBig(_queryTextBox.Text, _visualCaret)
                                 : VimMotionEngine.MoveNextWord(_queryTextBox.Text, _visualCaret));
                             return true;
                         case Key.B: // b / B: back a word / WORD
+                            _blockToEol = false;
                             BlockMove(modifiers.HasFlag(ModifierKeys.Shift)
                                 ? VimMotionEngine.MovePrevWordBig(_queryTextBox.Text, _visualCaret)
                                 : VimMotionEngine.MovePrevWord(_queryTextBox.Text, _visualCaret));
                             return true;
                         case Key.E: // e / E: end of word / WORD
+                            _blockToEol = false;
                             BlockMove(modifiers.HasFlag(ModifierKeys.Shift)
                                 ? VimMotionEngine.MoveEndWordBig(_queryTextBox.Text, _visualCaret)
                                 : VimMotionEngine.MoveEndWord(_queryTextBox.Text, _visualCaret));
@@ -2575,24 +2584,31 @@ namespace Flow.Launcher.VimMode
             FindNext(_lastSearch, backward, from);
         }
 
-        /// <summary>Case-insensitive substring search with wrap-around; moves the caret to the match.</summary>
+        /// <summary>
+        /// Vim-style search: the pattern is a .NET regex (an invalid pattern — e.g. a lone "(" — falls back to
+        /// a literal match, which mirrors Vim's magic mode for such characters). Smart-case: case-insensitive
+        /// unless the pattern contains an uppercase letter. Wraps around; moves the caret to the match.
+        /// </summary>
         private void FindNext(string pattern, bool backward, int from)
         {
             if (string.IsNullOrEmpty(pattern)) return;
             string text = _queryTextBox.Text;
             if (text.Length == 0) return;
+            var re = BuildRegex(pattern, SmartCaseIgnore(pattern));
+            if (re == null) return;
             int idx;
             if (!backward)
             {
                 int start = Math.Max(0, Math.Min(from, text.Length));
-                idx = text.IndexOf(pattern, start, StringComparison.OrdinalIgnoreCase);
-                if (idx < 0) idx = text.IndexOf(pattern, 0, StringComparison.OrdinalIgnoreCase); // wrap to top
+                var m = re.Match(text, start);
+                if (!m.Success) m = re.Match(text, 0); // wrap to top
+                idx = m.Success ? m.Index : -1;
             }
             else
             {
-                int start = Math.Max(0, Math.Min(from, text.Length - 1));
-                idx = text.LastIndexOf(pattern, start, StringComparison.OrdinalIgnoreCase);
-                if (idx < 0) idx = text.LastIndexOf(pattern, text.Length - 1, StringComparison.OrdinalIgnoreCase); // wrap to bottom
+                int start = Math.Max(0, Math.Min(from, text.Length));
+                idx = LastMatchIndex(re, text, start);
+                if (idx < 0) idx = LastMatchIndex(re, text, text.Length); // wrap to bottom
             }
             if (idx < 0) return;
             _queryTextBox.CaretIndex = idx;
@@ -2606,14 +2622,49 @@ namespace Flow.Launcher.VimMode
             UpdateCaretPosition();
         }
 
+        /// <summary>Smart-case: ignore case unless the pattern contains an uppercase letter.</summary>
+        private static bool SmartCaseIgnore(string pattern)
+        {
+            foreach (char c in pattern) if (char.IsUpper(c)) return false;
+            return true;
+        }
+
+        /// <summary>Builds a regex; an invalid pattern falls back to a literal (escaped) match. Null only if
+        /// even the escaped form fails to compile.</summary>
+        private static System.Text.RegularExpressions.Regex BuildRegex(string pattern, bool ignoreCase)
+        {
+            var opts = ignoreCase
+                ? System.Text.RegularExpressions.RegexOptions.IgnoreCase
+                : System.Text.RegularExpressions.RegexOptions.None;
+            try { return new System.Text.RegularExpressions.Regex(pattern, opts); }
+            catch
+            {
+                try { return new System.Text.RegularExpressions.Regex(System.Text.RegularExpressions.Regex.Escape(pattern), opts); }
+                catch { return null; }
+            }
+        }
+
+        /// <summary>Index of the last match starting at or before <paramref name="beforeOrAt"/>, or -1.</summary>
+        private static int LastMatchIndex(System.Text.RegularExpressions.Regex re, string text, int beforeOrAt)
+        {
+            int found = -1;
+            foreach (System.Text.RegularExpressions.Match m in re.Matches(text))
+            {
+                if (m.Index <= beforeOrAt) found = m.Index;
+                else break;
+            }
+            return found;
+        }
+
         /// <summary>
         /// A tiny ex-command set scoped to the editor: :w / :wq / :x send the buffer to the selected plugin;
-        /// :q closes the editor; :s/old/new/ (and :%s) replace text in the whole buffer (plain, not regex).
+        /// :q closes the editor; :s/pat/rep/flags substitutes (see <see cref="Substitute"/>).
         /// </summary>
         private void RunExCommand(string cmd)
         {
             if (string.IsNullOrEmpty(cmd)) return;
-            if (cmd.StartsWith("%")) cmd = cmd.Substring(1);
+            bool wholeBuffer = cmd.StartsWith("%");
+            if (wholeBuffer) cmd = cmd.Substring(1);
 
             if (cmd == "w" || cmd == "wq" || cmd == "x")
             {
@@ -2629,10 +2680,46 @@ namespace Flow.Launcher.VimMode
             }
             if (cmd.Length > 2 && cmd[0] == 's' && !char.IsLetterOrDigit(cmd[1]))
             {
-                char sep = cmd[1];
-                var parts = cmd.Substring(2).Split(sep);
-                if (parts.Length >= 2 && !string.IsNullOrEmpty(parts[0]))
-                    SetText(_queryTextBox.Text.Replace(parts[0], parts[1]));
+                Substitute(cmd, wholeBuffer);
+            }
+        }
+
+        /// <summary>
+        /// :s/pat/rep/flags — substitute on the current line; :%s/... over the whole buffer. The pattern is a
+        /// .NET regex (an invalid pattern falls back to a literal match). Flags: g (every match on a line, not
+        /// just the first); i / I (force ignore- / match-case, otherwise smart-case). The replacement uses
+        /// .NET syntax ($1 for groups, $&amp; for the whole match). A non-global :%s still replaces the first
+        /// match on every line, matching Vim.
+        /// </summary>
+        private void Substitute(string cmd, bool wholeBuffer)
+        {
+            char sep = cmd[1];
+            var parts = cmd.Substring(2).Split(sep);
+            if (parts.Length < 2 || string.IsNullOrEmpty(parts[0])) return;
+            string pat = parts[0], rep = parts[1];
+            string flags = parts.Length >= 3 ? parts[2] : "";
+            bool global = flags.IndexOf('g') >= 0;
+            bool ignoreCase = flags.IndexOf('i') >= 0 || (flags.IndexOf('I') < 0 && SmartCaseIgnore(pat));
+            var re = BuildRegex(pat, ignoreCase);
+            if (re == null) return;
+
+            string text = _queryTextBox.Text;
+            if (wholeBuffer)
+            {
+                // Per line, so a non-global :%s still hits the first match on every line (Vim's behavior).
+                var lines = text.Split('\n');
+                for (int i = 0; i < lines.Length; i++)
+                    lines[i] = global ? re.Replace(lines[i], rep) : re.Replace(lines[i], rep, 1);
+                SetText(string.Join("\n", lines));
+            }
+            else
+            {
+                int caret = Math.Max(0, Math.Min(_queryTextBox.CaretIndex, Math.Max(0, text.Length - 1)));
+                int ls = VimMotionEngine.GetLineStart(text, caret);
+                int le = VimMotionEngine.GetLineEnd(text, ls);
+                string line = text.Substring(ls, le - ls);
+                string newLine = global ? re.Replace(line, rep) : re.Replace(line, rep, 1);
+                SetText(text.Substring(0, ls) + newLine + text.Substring(le));
             }
         }
 
@@ -2642,10 +2729,15 @@ namespace Flow.Launcher.VimMode
         {
             _visualAnchor = _queryTextBox.CaretIndex;
             _visualCaret = _queryTextBox.CaretIndex;
+            _blockToEol = false;
             _queryTextBox.SelectionLength = 0; // block selection is drawn by an overlay, not native selection
             _vimEngine.SwitchToVisualBlock();
             UpdateBlockSelection();
         }
+
+        /// <summary>The end column (exclusive) of the block on a row of the given length: each row's own end
+        /// for a $-block, otherwise the block's right edge clamped to the line.</summary>
+        private int BlockColEnd(int lineLen, int maxCol) => _blockToEol ? lineLen : Math.Min(maxCol + 1, lineLen);
 
         private void ExitVisualBlockToNormal()
         {
@@ -2688,7 +2780,7 @@ namespace Flow.Launcher.VimMode
                     int ls = StartOfLineNumber(t, r + 1);
                     int lineLen = VimMotionEngine.GetLineEnd(t, ls) - ls;
                     var r1 = _queryTextBox.GetRectFromCharacterIndex(ls + Math.Min(minCol, lineLen));
-                    var r2 = _queryTextBox.GetRectFromCharacterIndex(ls + Math.Min(maxCol + 1, lineLen));
+                    var r2 = _queryTextBox.GetRectFromCharacterIndex(ls + BlockColEnd(lineLen, maxCol));
                     if (r1.IsEmpty) continue;
                     double left = r1.Left + m.Left, top = r1.Top + m.Top;
                     double right = r2.IsEmpty ? r1.Left : r2.Left;
@@ -2712,6 +2804,7 @@ namespace Flow.Launcher.VimMode
         /// <summary>Moves the block caret left/right within its current row (keeps it on the same line).</summary>
         private void MoveBlockCol(int delta)
         {
+            _blockToEol = false; // an explicit column motion cancels a $-block
             string t = _queryTextBox.Text;
             int row = VimMotionEngine.GetLineNumber(t, _visualCaret);
             int ls = StartOfLineNumber(t, row + 1);
@@ -2739,7 +2832,7 @@ namespace Flow.Launcher.VimMode
             {
                 int ls = StartOfLineNumber(t, r + 1);
                 int lineLen = VimMotionEngine.GetLineEnd(t, ls) - ls;
-                int cs = Math.Min(minCol, lineLen), ce = Math.Min(maxCol + 1, lineLen);
+                int cs = Math.Min(minCol, lineLen), ce = BlockColEnd(lineLen, maxCol);
                 sb.Append(t.Substring(ls + cs, Math.Max(0, ce - cs)));
                 if (r < maxRow) sb.Append('\n');
             }
@@ -2757,7 +2850,7 @@ namespace Flow.Launcher.VimMode
             {
                 int ls = StartOfLineNumber(t, r + 1);
                 int lineLen = VimMotionEngine.GetLineEnd(t, ls) - ls;
-                int cs = Math.Min(minCol, lineLen), ce = Math.Min(maxCol + 1, lineLen);
+                int cs = Math.Min(minCol, lineLen), ce = BlockColEnd(lineLen, maxCol);
                 if (ce > cs) t = t.Remove(ls + cs, ce - cs);
             }
             int caretRow = minRow, caretCol = minCol;
@@ -2767,6 +2860,8 @@ namespace Flow.Launcher.VimMode
             int target = targetLs + Math.Min(caretCol, targetLen);
             if (enterInsert)
             {
+                // Change: after removing the columns, type at the left edge and replicate plainly to each row.
+                _blockInsertAtEol = false; _blockInsertPad = false; _blockInsertSkipShort = false;
                 BeginBlockInsert(minRow, maxRow, caretCol, target);
             }
             else
@@ -2776,16 +2871,45 @@ namespace Flow.Launcher.VimMode
             }
         }
 
-        /// <summary>I / A: insert at the block's left (minCol) or right (maxCol+1) on the top row, then
-        /// replicate the typed text to the other rows on Esc.</summary>
+        /// <summary>
+        /// I / A: insert at the block's left (minCol) or right edge on the top row, then replicate the typed
+        /// text to the other rows on Esc. Vim fidelity: <c>I</c> skips rows shorter than the column; <c>A</c>
+        /// pads short rows with spaces; on a $-block, <c>A</c> appends at each row's own end.
+        /// </summary>
         private void BlockInsert(bool atRight)
         {
             string t = _queryTextBox.Text;
             var (minRow, maxRow, minCol, maxCol) = BlockBounds();
-            int col = atRight ? maxCol + 1 : minCol;
-            int ls = StartOfLineNumber(t, minRow + 1);
-            int lineLen = VimMotionEngine.GetLineEnd(t, ls) - ls;
-            int caret = ls + Math.Min(col, lineLen);
+            int topLs = StartOfLineNumber(t, minRow + 1);
+            int topLen = VimMotionEngine.GetLineEnd(t, topLs) - topLs;
+            _blockInsertAtEol = false; _blockInsertPad = false; _blockInsertSkipShort = false;
+            int col, caret;
+            if (atRight)
+            {
+                if (_blockToEol)
+                {
+                    _blockInsertAtEol = true;
+                    col = 0;
+                    caret = topLs + topLen; // append at the top row's own end
+                }
+                else
+                {
+                    _blockInsertPad = true;
+                    col = maxCol + 1;
+                    if (topLen < col) // pad the top row too so the caret sits at the column
+                    {
+                        t = t.Insert(topLs + topLen, new string(' ', col - topLen));
+                        SetText(t);
+                    }
+                    caret = topLs + col;
+                }
+            }
+            else // I: left edge; rows shorter than the column are skipped on replicate
+            {
+                _blockInsertSkipShort = true;
+                col = minCol;
+                caret = topLs + Math.Min(col, topLen);
+            }
             BeginBlockInsert(minRow, maxRow, col, caret);
         }
 
@@ -2821,8 +2945,23 @@ namespace Flow.Launcher.VimMode
                 if (r == topRow) continue;
                 int ls = StartOfLineNumber(t, r + 1);
                 int lineLen = VimMotionEngine.GetLineEnd(t, ls) - ls;
-                int pos = ls + Math.Min(_blockInsertCol, lineLen);
-                t = t.Insert(pos, inserted);
+                string toInsert = inserted;
+                int pos;
+                if (_blockInsertAtEol)
+                {
+                    pos = ls + lineLen; // $-block A: append at this row's own end
+                }
+                else if (lineLen < _blockInsertCol)
+                {
+                    if (_blockInsertSkipShort) continue;                                       // I: skip short rows
+                    if (_blockInsertPad) toInsert = new string(' ', _blockInsertCol - lineLen) + inserted; // A: pad
+                    pos = ls + lineLen;
+                }
+                else
+                {
+                    pos = ls + _blockInsertCol;
+                }
+                t = t.Insert(pos, toInsert);
             }
             SetText(t);
             _queryTextBox.CaretIndex = Math.Min(caretNow, _queryTextBox.Text.Length);
