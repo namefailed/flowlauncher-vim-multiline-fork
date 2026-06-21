@@ -293,7 +293,9 @@ namespace Flow.Launcher.VimMode
         private void OnEditorScrolled(object sender, System.Windows.Controls.ScrollChangedEventArgs e)
         {
             SnapScrollToLine();
-            RedrawLineNumbers();
+            // Reposition the block caret (and redraw the gutter) after a scroll — e.g. the scroll a paste
+            // triggers — so the caret tracks its new on-screen position instead of going stale.
+            UpdateCaretPosition();
         }
 
         /// <summary>
@@ -526,6 +528,17 @@ namespace Flow.Launcher.VimMode
         private void QueryTextBox_TextChanged(object sender, TextChangedEventArgs e)
         {
             UpdateCaretPosition();
+            // A text mutation (e.g. `p`) updates layout asynchronously, so the position above can be from the
+            // stale layout and the block caret would vanish until the next action. Re-run once layout settles.
+            if (!_caretRedrawPending && _vimEngine.CurrentMode != VimModeType.Insert)
+            {
+                _caretRedrawPending = true;
+                _mainWindow.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
+                {
+                    _caretRedrawPending = false;
+                    UpdateCaretPosition();
+                }));
+            }
         }
 
         private void UpdateCaretPosition()
