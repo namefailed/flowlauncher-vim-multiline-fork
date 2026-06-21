@@ -36,7 +36,7 @@ is almost entirely in `VimManager` (UI wiring) plus a set of **line-aware** help
 | `Flow.Launcher/VimMode/VimManager.cs` | All editor wiring: `SetMultiLineMode`, `EnableEditorScrollbar`, `ApplyEditorChrome`, the gutter/status redraws, the two text buffers, the editor-only key handling (`Ctrl+Enter`, `Enter`, `Ctrl+J/K`, `Ctrl+V`, `Ctrl+Shift+E`), paste normalisation, and external-editor handoff. |
 | `Flow.Launcher/VimMode/VimMotionEngine.cs` | Pure caret/range math. The multi-line fork adds the **line-aware** helpers (see §8). All unit-tested. |
 | `Flow.Launcher/VimMode/VimEngine.cs` | The mode state machine. Unchanged from the single-line fork. |
-| `Flow.Launcher/MainWindow.xaml` | Adds the editor overlays: `VimLineGutter` (Canvas), `VimStatusBarHost` (the mode line) with `VimModeSegment`/`VimModeText`/`VimStatusInfo`, `VimBlockCaret`, `VimModeIndicator`. Also where the shared `QueryIconArea` Border lives. |
+| `Flow.Launcher/MainWindow.xaml` | Adds the editor overlays: `VimLineGutter` (Canvas), `VimStatusBarHost` (the mode line) with `VimModeSegment`/`VimModeText`/`VimStatusInfo`, `VimBlockCaret`, `VimModeIndicator`, and `VimYankFlash` (the yank-highlight Canvas). Also where the shared `QueryIconArea` Border lives. |
 | `Flow.Launcher/Converters/MultilineTitleConverter.cs` | Collapses a multi-line result *title* to one line for display (see §9). Registered in `ResultListBox.xaml`. |
 | `Flow.Launcher.Test/VimMotionEngineTest.cs` | Unit tests for the motion math, including the line-aware helpers. |
 
