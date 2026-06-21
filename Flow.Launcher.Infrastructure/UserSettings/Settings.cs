@@ -73,6 +73,34 @@ namespace Flow.Launcher.Infrastructure.UserSettings
             }
         }
 
+        private bool _enableVimMultiLineEditor = true;
+        public bool EnableVimMultiLineEditor
+        {
+            get => _enableVimMultiLineEditor;
+            set { if (_enableVimMultiLineEditor != value) { _enableVimMultiLineEditor = value; OnPropertyChanged(); } }
+        }
+
+        private int _vimEditorVisibleLines = 9;
+        public int VimEditorVisibleLines
+        {
+            get => _vimEditorVisibleLines;
+            set { var v = System.Math.Max(3, System.Math.Min(20, value)); if (_vimEditorVisibleLines != v) { _vimEditorVisibleLines = v; OnPropertyChanged(); } }
+        }
+
+        private bool _vimEditorAutoPair = true;
+        public bool VimEditorAutoPair
+        {
+            get => _vimEditorAutoPair;
+            set { if (_vimEditorAutoPair != value) { _vimEditorAutoPair = value; OnPropertyChanged(); } }
+        }
+
+        private bool _vimEditorAutoIndent = true;
+        public bool VimEditorAutoIndent
+        {
+            get => _vimEditorAutoIndent;
+            set { if (_vimEditorAutoIndent != value) { _vimEditorAutoIndent = value; OnPropertyChanged(); } }
+        }
+
         public string Hotkey { get; set; } = $"{KeyConstant.Alt} + {KeyConstant.Space}";
 
         private string _openResultModifiers = KeyConstant.Alt;

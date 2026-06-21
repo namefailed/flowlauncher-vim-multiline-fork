@@ -85,6 +85,14 @@
     <system:String x:Key="showTaskbarWhenOpenedToolTip">Temporarily show the taskbar when Flow Launcher is opened, useful for auto-hidden taskbars.</system:String>
     <system:String x:Key="enableAdvancedVimMode">Enable Advanced Vim Mode</system:String>
     <system:String x:Key="enableAdvancedVimModeToolTip">Enables terminal-style inline Vim keybindings (Insert, Normal, Visual, and Visual Line modes, motions, and clipboard operations) directly within the search bar.</system:String>
+    <system:String x:Key="enableVimMultiLineEditor">Vim multi-line editor</system:String>
+    <system:String x:Key="enableVimMultiLineEditorToolTip">Allows toggling the search bar into a fixed-height, multi-line Vim editor with Ctrl+Enter (line numbers, mode line, send-to-plugin). Requires Advanced Vim Mode.</system:String>
+    <system:String x:Key="vimEditorVisibleLines">Editor height (lines)</system:String>
+    <system:String x:Key="vimEditorVisibleLinesToolTip">How many text lines the multi-line editor shows before it scrolls.</system:String>
+    <system:String x:Key="vimEditorAutoPair">Auto-pair brackets and quotes</system:String>
+    <system:String x:Key="vimEditorAutoPairToolTip">In the editor, typing ( [ { or a quote inserts the matching close; Backspace between an empty pair removes both.</system:String>
+    <system:String x:Key="vimEditorAutoIndent">Auto-indent new lines</system:String>
+    <system:String x:Key="vimEditorAutoIndentToolTip">In the editor, Enter carries the current line's leading whitespace onto the new line.</system:String>
     <system:String x:Key="dontPromptUpdateMsg">Do not show new version notifications</system:String>
     <system:String x:Key="SearchWindowPosition">Search Window Location</system:String>
     <system:String x:Key="SearchWindowScreenRememberLastLaunchLocation">Remember Last Position</system:String>

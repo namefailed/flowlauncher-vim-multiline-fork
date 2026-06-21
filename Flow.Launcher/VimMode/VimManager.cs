@@ -82,10 +82,6 @@ namespace Flow.Launcher.VimMode
         // Crash/restart-safe draft of the editor buffer: debounce-written to disk while editing, restored on
         // the first editor open of a fresh process so a crash or reboot can't lose a half-written entry.
         private bool _draftRestored;
-        // Editor conveniences (wired to settings later; default on). Auto-indent carries a line's leading
-        // whitespace onto the next; auto-pair inserts the closing bracket/quote and skips over it.
-        private bool _autoIndent = true;
-        private bool _autoPair = true;
         private readonly object _draftLock = new object();
         private System.Windows.Threading.DispatcherTimer _draftTimer;
         private static readonly string DraftPath = System.IO.Path.Combine(
@@ -116,7 +112,7 @@ namespace Flow.Launcher.VimMode
                 _queryTextBox.VerticalContentAlignment = VerticalAlignment.Top;
                 // Size the text viewport to an exact whole number of lines so the bottom line is never
                 // half-clipped, and so the editor window is no taller than the default launcher window.
-                _editorTextHeight = EditorVisibleLines * MeasureEditorLineHeight();
+                _editorTextHeight = System.Math.Max(3, _settings.VimEditorVisibleLines) * MeasureEditorLineHeight();
                 double boxHeight = _editorTextHeight + EditorModeStrip; // text viewport + the mode-line strip
 
                 // Fixed editor size (MinHeight overrides the bound single-line Height; we never write the
@@ -315,13 +311,12 @@ namespace Flow.Launcher.VimMode
         // Editor sizing. The inner scroll-viewer gets an EXPLICIT fixed Height — not a MaxHeight — so the text
         // viewport is reliably bounded and clipped no matter how the TextBox tries to grow (a single huge
         // wrapped line would otherwise balloon it). That height is set to an exact whole number of text lines
-        // (EditorVisibleLines x measured line height) so the bottom line is never shown half-clipped, and the
-        // gutter is keyed off the same height so its numbers exactly match the visible text. The line count is
-        // kept small enough that the editor window is no taller than the default (4-result) launcher window.
-        private const int EditorVisibleLines = 9;   // text rows shown in the editor
+        // (Settings.VimEditorVisibleLines x measured line height) so the bottom line is never shown
+        // half-clipped, and the gutter is keyed off the same height so its numbers exactly match the visible
+        // text. Default 9 lines keeps the window no taller than the default (4-result) launcher window.
         private const double EditorModeStrip = 34;  // space reserved below the text viewport for the mode line
         private const double EditorTopMargin = 7;
-        private double _editorTextHeight = 200;      // computed on entry = EditorVisibleLines * line height
+        private double _editorTextHeight = 200;      // computed on entry = visible lines * line height
 
         /// <summary>Measures the editor's text line height from its font (no layout pass needed).</summary>
         private double MeasureEditorLineHeight()
@@ -877,11 +872,15 @@ namespace Flow.Launcher.VimMode
             var modifiers = e.KeyboardDevice.Modifiers;
 
             // Ctrl+Enter toggles the multi-line editor (open Flow normally, then drop into the editor).
+            // Gated by the setting: only ENTER the editor when it's enabled, but always allow leaving it.
             if (modifiers.HasFlag(ModifierKeys.Control) && !modifiers.HasFlag(ModifierKeys.Alt) && e.Key == Key.Enter)
             {
-                ToggleMultiLineMode();
-                e.Handled = true;
-                return true;
+                if (_multiLineMode || _settings.EnableVimMultiLineEditor)
+                {
+                    ToggleMultiLineMode();
+                    e.Handled = true;
+                    return true;
+                }
             }
 
             // Ctrl+Shift+E in the editor: hand the buffer off to the OS text editor (for content
@@ -917,7 +916,7 @@ namespace Flow.Launcher.VimMode
                 // Auto-indent: carry the current line's leading whitespace onto the new line. (When the line
                 // has no indent — typical prose — this is just a plain "\n", so it never gets in the way.)
                 string indent = "";
-                if (_autoIndent)
+                if (_settings.VimEditorAutoIndent)
                 {
                     int lineStart = c;
                     while (lineStart > 0 && text[lineStart - 1] != '\n') lineStart--;
@@ -994,7 +993,7 @@ namespace Flow.Launcher.VimMode
                     return true;
                 }
                 // Auto-pair: Backspace with the caret between an empty pair deletes both sides.
-                if (_autoPair && _multiLineMode && e.Key == Key.Back && modifiers == ModifierKeys.None)
+                if (_settings.VimEditorAutoPair && _multiLineMode && e.Key == Key.Back && modifiers == ModifierKeys.None)
                 {
                     int c = _queryTextBox.CaretIndex;
                     string text = _queryTextBox.Text;
@@ -2522,7 +2521,7 @@ namespace Flow.Launcher.VimMode
                 return;
             }
             // Auto-pair brackets/quotes while typing in the editor.
-            if (_autoPair && _multiLineMode && _vimEngine.CurrentMode == VimModeType.Insert
+            if (_settings.VimEditorAutoPair && _multiLineMode && _vimEngine.CurrentMode == VimModeType.Insert
                 && e.Text != null && e.Text.Length == 1 && TryAutoPair(e.Text[0]))
             {
                 e.Handled = true;
