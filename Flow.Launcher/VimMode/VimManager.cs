@@ -269,7 +269,10 @@ namespace Flow.Launcher.VimMode
                             TextAlignment = TextAlignment.Center,
                             Width = GutterWidth
                         };
-                        System.Windows.Controls.Canvas.SetTop(tb, rect.Top + marginTop);
+                        // Vertically center the (smaller) number within the text row's box so it lines up
+                        // with the glyphs instead of sitting at the top of the taller line box.
+                        tb.Measure(new System.Windows.Size(GutterWidth, double.PositiveInfinity));
+                        System.Windows.Controls.Canvas.SetTop(tb, rect.Top + marginTop + (rect.Height - tb.DesiredSize.Height) / 2.0);
                         System.Windows.Controls.Canvas.SetLeft(tb, 0);
                         _vimLineGutter.Children.Add(tb);
                     }
