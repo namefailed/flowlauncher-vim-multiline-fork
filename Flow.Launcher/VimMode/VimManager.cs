@@ -51,6 +51,10 @@ namespace Flow.Launcher.VimMode
         // The Grid that holds the query box + all editor overlays; hard-capped in the editor so the
         // window can't stretch on a fast paste (see SetMultiLineMode).
         private readonly FrameworkElement _queryBoxArea;
+        // The results list; in the editor its MaxHeight is capped to a single row so only the top result
+        // shows. The original (bound) MaxHeight is captured so it can be restored on exit.
+        private readonly FrameworkElement _resultListBox;
+        private System.Windows.Data.BindingBase _resultMaxHeightBinding;
         // Flow's single-line search chrome, hidden while the editor is active.
         private readonly UIElement _clockPanel;
         private readonly UIElement _placeholderBox;
@@ -123,6 +127,7 @@ namespace Flow.Launcher.VimMode
                     _queryBoxArea.MaxHeight = EditorTopMargin + boxHeight;
                     _queryBoxArea.ClipToBounds = true;
                 }
+                LimitResultsToTop(true);        // show only the top-most result in the editor
                 ApplyEditorChrome(true);        // also resolves _editorScrollViewer via HookEditorScroll
                 EnableEditorScrollbar(true);    // real scrollbar + viewport clamp (fixes paste-stretch)
                 // Restore the editor scratchpad and select it so typing starts over (Flow's default feel).
@@ -144,6 +149,7 @@ namespace Flow.Launcher.VimMode
                     _queryBoxArea.ClearValue(FrameworkElement.MaxHeightProperty);
                     _queryBoxArea.ClearValue(UIElement.ClipToBoundsProperty);
                 }
+                LimitResultsToTop(false);       // restore the normal multi-result list
                 EnableEditorScrollbar(false);   // restore the template's hidden scrollbar + clear the clamp
                 ApplyEditorChrome(false);
                 // Restore the single-line query and select it so typing starts over (Flow's default feel).
@@ -154,6 +160,31 @@ namespace Flow.Launcher.VimMode
 
             UpdateStatusBar();
             RedrawLineNumbers();
+        }
+
+        /// <summary>
+        /// In the editor, cap the results list to a single row so only the top-most result is shown; restore
+        /// the normal (bound) MaxHeight on exit. The results list's MaxHeight is normally bound to
+        /// MaxResultsToShow * ItemHeightSize, and each row is exactly ItemHeightSize — so a one-row cap shows
+        /// just the top result. Scoped to the editor; single-line mode keeps its full multi-result list.
+        /// </summary>
+        private void LimitResultsToTop(bool editor)
+        {
+            if (_resultListBox == null) return;
+            if (editor)
+            {
+                // Capture the original bound MaxHeight once, before we override it with a local value.
+                _resultMaxHeightBinding ??= System.Windows.Data.BindingOperations.GetBinding(_resultListBox, FrameworkElement.MaxHeightProperty);
+                _resultListBox.MaxHeight = _settings.ItemHeightSize;
+            }
+            else if (_resultMaxHeightBinding != null)
+            {
+                System.Windows.Data.BindingOperations.SetBinding(_resultListBox, FrameworkElement.MaxHeightProperty, _resultMaxHeightBinding);
+            }
+            else
+            {
+                _resultListBox.ClearValue(FrameworkElement.MaxHeightProperty);
+            }
         }
 
         /// <summary>
@@ -482,6 +513,7 @@ namespace Flow.Launcher.VimMode
             _vimStatusInfo = mainWindow.FindName("VimStatusInfo") as System.Windows.Controls.TextBlock;
             _vimLineGutter = mainWindow.FindName("VimLineGutter") as System.Windows.Controls.Canvas;
             _queryBoxArea = mainWindow.FindName("QueryBoxArea") as FrameworkElement;
+            _resultListBox = mainWindow.FindName("ResultListBox") as FrameworkElement;
             _clockPanel = mainWindow.FindName("ClockPanel") as UIElement;
             _placeholderBox = mainWindow.FindName("QueryTextPlaceholderBox") as UIElement;
             _suggestionBox = mainWindow.FindName("QueryTextSuggestionBox") as UIElement;
