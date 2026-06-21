@@ -181,12 +181,16 @@ namespace Flow.Launcher.VimMode
                     // sliding under the mode line, and makes scroll-to-caret use the real visible height. The
                     // small top inset gives the first line breathing room when scrolling up.
                     _editorScrollViewer.Margin = new Thickness(0, 2, 0, 30);
+                    // Slim, thumb-only scrollbar (scoped to this viewer only).
+                    if (_mainWindow.TryFindResource("VimEditorScrollBarStyle") is Style slim)
+                        _editorScrollViewer.Resources[typeof(System.Windows.Controls.Primitives.ScrollBar)] = slim;
                 }
                 else
                 {
                     _editorScrollViewer.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden; // template default
                     _editorScrollViewer.ClearValue(FrameworkElement.MaxHeightProperty);
                     _editorScrollViewer.ClearValue(FrameworkElement.MarginProperty);
+                    _editorScrollViewer.Resources.Remove(typeof(System.Windows.Controls.Primitives.ScrollBar));
                 }
             }
 
