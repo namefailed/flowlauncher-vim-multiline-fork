@@ -1774,6 +1774,21 @@ namespace Flow.Launcher.VimMode
                             BlockMove(Math.Max(VimMotionEngine.GetLineStart(_queryTextBox.Text, _visualCaret),
                                                VimMotionEngine.GetLineEnd(_queryTextBox.Text, _visualCaret) - 1));
                             return true;
+                        case Key.W: // w / W: forward a word / WORD (the block reshapes to the new corner)
+                            BlockMove(modifiers.HasFlag(ModifierKeys.Shift)
+                                ? VimMotionEngine.MoveNextWordBig(_queryTextBox.Text, _visualCaret)
+                                : VimMotionEngine.MoveNextWord(_queryTextBox.Text, _visualCaret));
+                            return true;
+                        case Key.B: // b / B: back a word / WORD
+                            BlockMove(modifiers.HasFlag(ModifierKeys.Shift)
+                                ? VimMotionEngine.MovePrevWordBig(_queryTextBox.Text, _visualCaret)
+                                : VimMotionEngine.MovePrevWord(_queryTextBox.Text, _visualCaret));
+                            return true;
+                        case Key.E: // e / E: end of word / WORD
+                            BlockMove(modifiers.HasFlag(ModifierKeys.Shift)
+                                ? VimMotionEngine.MoveEndWordBig(_queryTextBox.Text, _visualCaret)
+                                : VimMotionEngine.MoveEndWord(_queryTextBox.Text, _visualCaret));
+                            return true;
                         case Key.Y:
                             BlockYank();
                             return true;
