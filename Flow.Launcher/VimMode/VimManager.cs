@@ -79,6 +79,13 @@ namespace Flow.Launcher.VimMode
         private bool _multiLineMode;      // true when the query box is the multi-line editor
         private string _multiLineBuffer = ""; // the multi-line editor's text; preserved across hide/show and mode switches
         private string _singleLineBuffer = ""; // the normal single-line Flow query; preserved while editing in multi-line
+        // Crash/restart-safe draft of the editor buffer: debounce-written to disk while editing, restored on
+        // the first editor open of a fresh process so a crash or reboot can't lose a half-written entry.
+        private bool _draftRestored;
+        private readonly object _draftLock = new object();
+        private System.Windows.Threading.DispatcherTimer _draftTimer;
+        private static readonly string DraftPath = System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FlowLauncher", "vim-scratch-draft.txt");
         private readonly Flow.Launcher.Infrastructure.UserSettings.Settings _settings;
 
         /// <summary>
@@ -130,6 +137,7 @@ namespace Flow.Launcher.VimMode
                 LimitResultsToTop(true);        // show only the top-most result in the editor
                 ApplyEditorChrome(true);        // also resolves _editorScrollViewer via HookEditorScroll
                 EnableEditorScrollbar(true);    // real scrollbar + viewport clamp (fixes paste-stretch)
+                RestoreDraftIfAny();            // recover a crash/restart-orphaned entry on first open
                 // Restore the editor scratchpad and select it so typing starts over (Flow's default feel).
                 SetText(_multiLineBuffer);
                 _vimEngine.SwitchToInsert();    // land in Insert so the user can type immediately
@@ -160,6 +168,56 @@ namespace Flow.Launcher.VimMode
 
             UpdateStatusBar();
             RedrawLineNumbers();
+        }
+
+        /// <summary>
+        /// Debounced autosave of the editor buffer to disk (called on every text change while editing), so a
+        /// crash/reboot can't lose a half-written entry. Writes ~1s after typing stops.
+        /// </summary>
+        private void ScheduleDraftSave()
+        {
+            if (_draftTimer == null)
+            {
+                _draftTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000) };
+                _draftTimer.Tick += (s, e) => { _draftTimer.Stop(); SaveDraft(_queryTextBox.Text); };
+            }
+            _draftTimer.Stop();
+            _draftTimer.Start();
+        }
+
+        /// <summary>Writes the (LF-normalized) draft to disk. Safe to call from any thread.</summary>
+        private void SaveDraft(string text)
+        {
+            try
+            {
+                lock (_draftLock)
+                {
+                    var dir = System.IO.Path.GetDirectoryName(DraftPath);
+                    if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir);
+                    System.IO.File.WriteAllText(DraftPath, NormalizeLf(text) ?? "");
+                }
+            }
+            catch (Exception ex) { Flow.Launcher.Infrastructure.Logger.Log.Exception("VimManager", "Draft save failed", ex); }
+        }
+
+        /// <summary>
+        /// On the first editor open of a fresh process, if there's no in-memory buffer yet but a saved draft
+        /// exists, load it — recovering a half-written entry left behind by a crash, reboot, or restart.
+        /// </summary>
+        private void RestoreDraftIfAny()
+        {
+            if (_draftRestored) return;
+            _draftRestored = true;
+            if (!string.IsNullOrEmpty(_multiLineBuffer)) return;
+            try
+            {
+                if (System.IO.File.Exists(DraftPath))
+                {
+                    var draft = NormalizeLf(System.IO.File.ReadAllText(DraftPath));
+                    if (!string.IsNullOrEmpty(draft)) _multiLineBuffer = draft;
+                }
+            }
+            catch (Exception ex) { Flow.Launcher.Infrastructure.Logger.Log.Exception("VimManager", "Draft restore failed", ex); }
         }
 
         /// <summary>
@@ -560,6 +618,7 @@ namespace Flow.Launcher.VimMode
         private void QueryTextBox_TextChanged(object sender, TextChangedEventArgs e)
         {
             UpdateCaretPosition();
+            if (_multiLineMode) ScheduleDraftSave(); // crash/restart-safe autosave of the editor buffer
             // A text mutation (e.g. `p`) updates layout asynchronously, so the position above can be from the
             // stale layout and the block caret would vanish until the next action. Re-run once layout settles.
             if (!_caretRedrawPending && _vimEngine.CurrentMode != VimModeType.Insert)
@@ -835,6 +894,10 @@ namespace Flow.Launcher.VimMode
             if (_multiLineMode && e.Key == Key.Enter && modifiers == ModifierKeys.None
                 && _vimEngine.CurrentMode != VimModeType.Insert)
             {
+                // Keep the entry after sending (accidental-send insurance): the send is a blind execute of
+                // whatever result is selected, so retain the buffer + draft so a misfire is recoverable.
+                _multiLineBuffer = _queryTextBox.Text;
+                SaveDraft(_multiLineBuffer);
                 _viewModel.OpenResultCommand.Execute(null);
                 e.Handled = true;
                 return true;
@@ -1963,10 +2026,14 @@ namespace Flow.Launcher.VimMode
             try
             {
                 string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "flowlauncher-vim-scratch.txt");
-                System.IO.File.WriteAllText(path, _queryTextBox.Text);
+                // LF-normalize so the handed-off file doesn't reintroduce ^M (matching the rest of the editor).
+                System.IO.File.WriteAllText(path, NormalizeLf(_queryTextBox.Text) ?? "");
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+                // Only now that the write + launch have succeeded is it safe to leave the editor and drop the
+                // scratchpad; if either threw above we keep the buffer (and editor) so the entry isn't lost.
                 SetMultiLineMode(false); // content now lives in the file; leave the inline editor
-                _multiLineBuffer = ""; // the scratchpad was exported to the file; start fresh next time
+                _multiLineBuffer = "";   // the scratchpad was exported to the file; start fresh next time
+                SaveDraft("");           // content lives in the handed-off file now; clear the recovery draft
                 _viewModel.Hide();
             }
             catch (Exception ex) { Flow.Launcher.Infrastructure.Logger.Log.Exception("VimManager", "Open in external editor failed", ex); }
