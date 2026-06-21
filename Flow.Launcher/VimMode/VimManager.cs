@@ -81,6 +81,13 @@ namespace Flow.Launcher.VimMode
         private string _lastSearch = "";
         private bool _lastSearchBackward;
         private System.Windows.Controls.TextBlock _vimCommandLine;
+        // Visual-block selection overlay + block-insert (I/A) state: the text typed on the top row is
+        // replicated to the other block rows on Esc.
+        private System.Windows.Controls.Canvas _vimBlockSelection;
+        private bool _blockInsertActive;
+        private System.Collections.Generic.List<int> _blockRows;
+        private int _blockInsertCol;
+        private int _blockInsertStart;
         private bool _gPending;
         private string _awaitingTextObject = "";
         private (int anchor, int caret)? _lastVisualRange;
@@ -519,6 +526,7 @@ namespace Flow.Launcher.VimMode
                 VimModeType.Normal => "NORMAL",
                 VimModeType.Visual => "VISUAL",
                 VimModeType.VisualLine => "V-LINE",
+                VimModeType.VisualBlock => "V-BLOCK",
                 _ => "INSERT"
             };
             if (_vimStatusInfo != null) _vimStatusInfo.Text = $"Ln {line}, Col {col}     {text.Length} chars";
@@ -580,6 +588,7 @@ namespace Flow.Launcher.VimMode
             _vimModeText = mainWindow.FindName("VimModeText") as System.Windows.Controls.TextBlock;
             _vimStatusInfo = mainWindow.FindName("VimStatusInfo") as System.Windows.Controls.TextBlock;
             _vimCommandLine = mainWindow.FindName("VimCommandLine") as System.Windows.Controls.TextBlock;
+            _vimBlockSelection = mainWindow.FindName("VimBlockSelection") as System.Windows.Controls.Canvas;
             _vimLineGutter = mainWindow.FindName("VimLineGutter") as System.Windows.Controls.Canvas;
             _queryBoxArea = mainWindow.FindName("QueryBoxArea") as FrameworkElement;
             _resultListBox = mainWindow.FindName("ResultListBox") as FrameworkElement;
@@ -649,7 +658,7 @@ namespace Flow.Launcher.VimMode
             {
                 try
                 {
-                    int index = (_vimEngine.CurrentMode == VimModeType.Visual || _vimEngine.CurrentMode == VimModeType.VisualLine)
+                    int index = (_vimEngine.CurrentMode == VimModeType.Visual || _vimEngine.CurrentMode == VimModeType.VisualLine || _vimEngine.CurrentMode == VimModeType.VisualBlock)
                         ? _visualCaret
                         : _queryTextBox.CaretIndex;
                     var rect = _queryTextBox.GetRectFromCharacterIndex(index);
@@ -800,7 +809,7 @@ namespace Flow.Launcher.VimMode
 
         private void VimEngine_ModeChanged(VimModeType mode)
         {
-            UpdateIndicatorAsync(mode);
+            UpdateIndicatorAsync(mode); // marshals to the UI thread; ApplyModeUI clears the block overlay
         }
 
         private void UpdateIndicatorAsync(VimModeType mode)
@@ -818,6 +827,7 @@ namespace Flow.Launcher.VimMode
         private void ApplyModeUI(VimModeType mode)
         {
             InputMethod.SetIsInputMethodSuspended(_queryTextBox, mode != VimModeType.Insert);
+            if (mode != VimModeType.VisualBlock) ClearBlockSelection(); // block overlay only shows in block mode
 
             if (_vimModeIndicator != null)
             {
@@ -833,6 +843,7 @@ namespace Flow.Launcher.VimMode
                     VimModeType.Normal => (System.Windows.Media.Brush)Application.Current.FindResource("BasicSystemAccentColor") ?? CreateBrush(0, 120, 215),
                     VimModeType.Visual => CreateBrush(153, 50, 204),
                     VimModeType.VisualLine => CreateBrush(255, 140, 0),
+                    VimModeType.VisualBlock => CreateBrush(0, 168, 168),
                     _ => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.Transparent)
                 };
             }
@@ -993,11 +1004,13 @@ namespace Flow.Launcher.VimMode
                 if (e.Key == Key.K) { _viewModel.SelectPrevItemCommand.Execute(null); e.Handled = true; return true; }
             }
 
-            // Ctrl+V in the editor: paste with line endings normalized to \n (so CRLF text from other
-            // apps doesn't reintroduce ^M), instead of WPF's default paste.
+            // Ctrl+V in the editor: in Insert mode it pastes with line endings normalized to \n (so CRLF
+            // text doesn't reintroduce ^M); in Normal/Visual it starts Visual-Block selection (real Vim).
             if (_multiLineMode && modifiers.HasFlag(ModifierKeys.Control) && !modifiers.HasFlag(ModifierKeys.Alt) && e.Key == Key.V)
             {
-                PasteAtCaretNormalized();
+                if (_vimEngine.CurrentMode == VimModeType.Insert) PasteAtCaretNormalized();
+                else if (_vimEngine.CurrentMode == VimModeType.VisualBlock) ExitVisualBlockToNormal();
+                else EnterVisualBlock();
                 e.Handled = true;
                 return true;
             }
@@ -1018,6 +1031,7 @@ namespace Flow.Launcher.VimMode
             {
                 if (e.Key == Key.Escape)
                 {
+                    if (_blockInsertActive) CommitBlockInsert(); // replicate a block I/A/c to the other rows
                     _vimEngine.SwitchToNormal();
                     _lastEscapeTime = DateTime.Now;
                     e.Handled = true;
@@ -1730,6 +1744,51 @@ namespace Flow.Launcher.VimMode
                                 UpdateVisualLineSelection();
                             }
                             else _viewModel.SelectPrevItemCommand.Execute(null);
+                            return true;
+                        default:
+                            return true;
+                    }
+
+                case VimModeType.VisualBlock:
+                    switch (e.Key)
+                    {
+                        case Key.Escape:
+                            ExitVisualBlockToNormal();
+                            return true;
+                        case Key.H:
+                            MoveBlockCol(-1);
+                            return true;
+                        case Key.L:
+                            MoveBlockCol(1);
+                            return true;
+                        case Key.J:
+                            BlockMove(VimMotionEngine.MoveDown(_queryTextBox.Text, _visualCaret));
+                            return true;
+                        case Key.K:
+                            BlockMove(VimMotionEngine.MoveUp(_queryTextBox.Text, _visualCaret));
+                            return true;
+                        case Key.D0:
+                            BlockMove(VimMotionEngine.GetLineStart(_queryTextBox.Text, _visualCaret));
+                            return true;
+                        case Key.D4 when modifiers.HasFlag(ModifierKeys.Shift): // $ -> end of the current line
+                            BlockMove(Math.Max(VimMotionEngine.GetLineStart(_queryTextBox.Text, _visualCaret),
+                                               VimMotionEngine.GetLineEnd(_queryTextBox.Text, _visualCaret) - 1));
+                            return true;
+                        case Key.Y:
+                            BlockYank();
+                            return true;
+                        case Key.D:
+                        case Key.X:
+                            BlockDelete(enterInsert: false);
+                            return true;
+                        case Key.C when !modifiers.HasFlag(ModifierKeys.Shift):
+                            BlockDelete(enterInsert: true);
+                            return true;
+                        case Key.I when modifiers.HasFlag(ModifierKeys.Shift): // I -> insert before the block on all rows
+                            BlockInsert(atRight: false);
+                            return true;
+                        case Key.A when modifiers.HasFlag(ModifierKeys.Shift): // A -> append after the block on all rows
+                            BlockInsert(atRight: true);
                             return true;
                         default:
                             return true;
@@ -2560,6 +2619,198 @@ namespace Flow.Launcher.VimMode
                 if (parts.Length >= 2 && !string.IsNullOrEmpty(parts[0]))
                     SetText(_queryTextBox.Text.Replace(parts[0], parts[1]));
             }
+        }
+
+        // ----- Visual-Block mode (Ctrl-V) -----
+
+        private void EnterVisualBlock()
+        {
+            _visualAnchor = _queryTextBox.CaretIndex;
+            _visualCaret = _queryTextBox.CaretIndex;
+            _queryTextBox.SelectionLength = 0; // block selection is drawn by an overlay, not native selection
+            _vimEngine.SwitchToVisualBlock();
+            UpdateBlockSelection();
+        }
+
+        private void ExitVisualBlockToNormal()
+        {
+            _vimEngine.SwitchToNormal();
+            _queryTextBox.CaretIndex = Math.Min(_visualCaret, _queryTextBox.Text.Length);
+            ClearBlockSelection();
+        }
+
+        private void ClearBlockSelection()
+        {
+            if (_vimBlockSelection == null) return;
+            _vimBlockSelection.Children.Clear();
+            _vimBlockSelection.Visibility = Visibility.Collapsed;
+        }
+
+        /// <summary>The block's row/column extent (0-based, inclusive) from the anchor and caret.</summary>
+        private (int minRow, int maxRow, int minCol, int maxCol) BlockBounds()
+        {
+            string t = _queryTextBox.Text;
+            int aRow = VimMotionEngine.GetLineNumber(t, _visualAnchor), aCol = VimMotionEngine.GetColumn(t, _visualAnchor);
+            int cRow = VimMotionEngine.GetLineNumber(t, _visualCaret), cCol = VimMotionEngine.GetColumn(t, _visualCaret);
+            return (Math.Min(aRow, cRow), Math.Max(aRow, cRow), Math.Min(aCol, cCol), Math.Max(aCol, cCol));
+        }
+
+        /// <summary>Draws the block as a translucent rectangle per row over the column span.</summary>
+        private void UpdateBlockSelection()
+        {
+            if (_vimBlockSelection == null) return;
+            _vimBlockSelection.Children.Clear();
+            if (_vimEngine.CurrentMode != VimModeType.VisualBlock) { _vimBlockSelection.Visibility = Visibility.Collapsed; return; }
+            try
+            {
+                string t = _queryTextBox.Text;
+                var (minRow, maxRow, minCol, maxCol) = BlockBounds();
+                var m = _queryTextBox.Margin;
+                var fill = (System.Windows.Media.Brush)Application.Current.TryFindResource("BasicSystemAccentColor")
+                           ?? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 120, 215));
+                for (int r = minRow; r <= maxRow; r++)
+                {
+                    int ls = StartOfLineNumber(t, r + 1);
+                    int lineLen = VimMotionEngine.GetLineEnd(t, ls) - ls;
+                    var r1 = _queryTextBox.GetRectFromCharacterIndex(ls + Math.Min(minCol, lineLen));
+                    var r2 = _queryTextBox.GetRectFromCharacterIndex(ls + Math.Min(maxCol + 1, lineLen));
+                    if (r1.IsEmpty) continue;
+                    double left = r1.Left + m.Left, top = r1.Top + m.Top;
+                    double right = r2.IsEmpty ? r1.Left : r2.Left;
+                    var rect = new System.Windows.Shapes.Rectangle
+                    {
+                        Width = Math.Max(right - r1.Left, 3),
+                        Height = r1.Height,
+                        Fill = fill,
+                        Opacity = 0.3,
+                        IsHitTestVisible = false,
+                    };
+                    System.Windows.Controls.Canvas.SetLeft(rect, left);
+                    System.Windows.Controls.Canvas.SetTop(rect, top);
+                    _vimBlockSelection.Children.Add(rect);
+                }
+                _vimBlockSelection.Visibility = Visibility.Visible;
+            }
+            catch (Exception ex) { Flow.Launcher.Infrastructure.Logger.Log.Exception("VimManager", "Block selection draw failed", ex); }
+        }
+
+        /// <summary>Moves the block caret left/right within its current row (keeps it on the same line).</summary>
+        private void MoveBlockCol(int delta)
+        {
+            string t = _queryTextBox.Text;
+            int row = VimMotionEngine.GetLineNumber(t, _visualCaret);
+            int ls = StartOfLineNumber(t, row + 1);
+            int lineLen = VimMotionEngine.GetLineEnd(t, ls) - ls;
+            int col = Math.Max(0, Math.Min(_visualCaret - ls + delta, lineLen));
+            _visualCaret = ls + col;
+            UpdateCaretPosition();
+            UpdateBlockSelection();
+        }
+
+        private void BlockMove(int newCaret)
+        {
+            _visualCaret = Math.Max(0, Math.Min(newCaret, _queryTextBox.Text.Length));
+            UpdateCaretPosition();
+            UpdateBlockSelection();
+        }
+
+        /// <summary>Yanks the column block (rows joined by \n) to the clipboard, then returns to Normal.</summary>
+        private void BlockYank()
+        {
+            string t = _queryTextBox.Text;
+            var (minRow, maxRow, minCol, maxCol) = BlockBounds();
+            var sb = new System.Text.StringBuilder();
+            for (int r = minRow; r <= maxRow; r++)
+            {
+                int ls = StartOfLineNumber(t, r + 1);
+                int lineLen = VimMotionEngine.GetLineEnd(t, ls) - ls;
+                int cs = Math.Min(minCol, lineLen), ce = Math.Min(maxCol + 1, lineLen);
+                sb.Append(t.Substring(ls + cs, Math.Max(0, ce - cs)));
+                if (r < maxRow) sb.Append('\n');
+            }
+            SetClipboardText(sb.ToString());
+            ExitVisualBlockToNormal();
+        }
+
+        /// <summary>Deletes the column block from every row. Returns to Normal (or stays for change).</summary>
+        private void BlockDelete(bool enterInsert)
+        {
+            string t = _queryTextBox.Text;
+            var (minRow, maxRow, minCol, maxCol) = BlockBounds();
+            // Delete bottom-to-top so earlier rows' indices stay valid.
+            for (int r = maxRow; r >= minRow; r--)
+            {
+                int ls = StartOfLineNumber(t, r + 1);
+                int lineLen = VimMotionEngine.GetLineEnd(t, ls) - ls;
+                int cs = Math.Min(minCol, lineLen), ce = Math.Min(maxCol + 1, lineLen);
+                if (ce > cs) t = t.Remove(ls + cs, ce - cs);
+            }
+            int caretRow = minRow, caretCol = minCol;
+            SetText(t);
+            int targetLs = StartOfLineNumber(t, caretRow + 1);
+            int targetLen = VimMotionEngine.GetLineEnd(t, targetLs) - targetLs;
+            int target = targetLs + Math.Min(caretCol, targetLen);
+            if (enterInsert)
+            {
+                BeginBlockInsert(minRow, maxRow, caretCol, target);
+            }
+            else
+            {
+                _queryTextBox.CaretIndex = Math.Min(target, _queryTextBox.Text.Length);
+                ExitVisualBlockToNormal();
+            }
+        }
+
+        /// <summary>I / A: insert at the block's left (minCol) or right (maxCol+1) on the top row, then
+        /// replicate the typed text to the other rows on Esc.</summary>
+        private void BlockInsert(bool atRight)
+        {
+            string t = _queryTextBox.Text;
+            var (minRow, maxRow, minCol, maxCol) = BlockBounds();
+            int col = atRight ? maxCol + 1 : minCol;
+            int ls = StartOfLineNumber(t, minRow + 1);
+            int lineLen = VimMotionEngine.GetLineEnd(t, ls) - ls;
+            int caret = ls + Math.Min(col, lineLen);
+            BeginBlockInsert(minRow, maxRow, col, caret);
+        }
+
+        private void BeginBlockInsert(int topRow, int bottomRow, int col, int caret)
+        {
+            _blockRows = new System.Collections.Generic.List<int>();
+            for (int r = topRow; r <= bottomRow; r++) _blockRows.Add(r);
+            _blockInsertCol = col;
+            ClearBlockSelection();
+            _vimEngine.SwitchToInsert();
+            _queryTextBox.CaretIndex = Math.Min(caret, _queryTextBox.Text.Length);
+            _blockInsertStart = _queryTextBox.CaretIndex;
+            _blockInsertActive = true;
+        }
+
+        /// <summary>On Esc after a block I/A/c, replicates the text typed on the top row to the other rows.</summary>
+        private void CommitBlockInsert()
+        {
+            _blockInsertActive = false;
+            var rows = _blockRows;
+            _blockRows = null;
+            if (rows == null || rows.Count <= 1) return;
+            int caretNow = _queryTextBox.CaretIndex;
+            if (caretNow <= _blockInsertStart) return;
+            string inserted = _queryTextBox.Text.Substring(_blockInsertStart, caretNow - _blockInsertStart);
+            if (inserted.IndexOf('\n') >= 0) return; // multi-line insert: don't replicate
+            string t = _queryTextBox.Text;
+            int topRow = rows[0];
+            // Apply to the non-top rows bottom-to-top so higher rows' line starts stay valid.
+            for (int i = rows.Count - 1; i >= 1; i--)
+            {
+                int r = rows[i];
+                if (r == topRow) continue;
+                int ls = StartOfLineNumber(t, r + 1);
+                int lineLen = VimMotionEngine.GetLineEnd(t, ls) - ls;
+                int pos = ls + Math.Min(_blockInsertCol, lineLen);
+                t = t.Insert(pos, inserted);
+            }
+            SetText(t);
+            _queryTextBox.CaretIndex = Math.Min(caretNow, _queryTextBox.Text.Length);
         }
 
         private void EnterVisualMode()

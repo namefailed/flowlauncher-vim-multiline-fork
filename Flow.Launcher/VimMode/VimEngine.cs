@@ -10,7 +10,8 @@ namespace Flow.Launcher.VimMode
         Insert,
         Normal,
         Visual,
-        VisualLine
+        VisualLine,
+        VisualBlock
     }
 
     /// <summary>
@@ -55,5 +56,10 @@ namespace Flow.Launcher.VimMode
         /// Switches the engine to Visual Line mode.
         /// </summary>
         public void SwitchToVisualLine() => SetMode(VimModeType.VisualLine);
+
+        /// <summary>
+        /// Switches the engine to Visual Block mode.
+        /// </summary>
+        public void SwitchToVisualBlock() => SetMode(VimModeType.VisualBlock);
     }
 }

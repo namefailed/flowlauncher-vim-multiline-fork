@@ -396,6 +396,11 @@
                     IsHitTestVisible="False"
                     Visibility="Collapsed"
                     Panel.ZIndex="9" />
+            <Canvas x:Name="VimBlockSelection"
+                    ClipToBounds="True"
+                    IsHitTestVisible="False"
+                    Visibility="Collapsed"
+                    Panel.ZIndex="8" />
             <Rectangle x:Name="VimBlockCaret"
                        Fill="{DynamicResource BasicSystemAccentColor}"
                        Opacity="0.5"
