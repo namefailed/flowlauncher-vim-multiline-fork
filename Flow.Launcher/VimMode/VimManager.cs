@@ -48,6 +48,9 @@ namespace Flow.Launcher.VimMode
         private readonly System.Windows.Controls.TextBlock _vimModeText;
         private readonly System.Windows.Controls.TextBlock _vimStatusInfo;
         private readonly System.Windows.Controls.Canvas _vimLineGutter;
+        // The Grid that holds the query box + all editor overlays; hard-capped in the editor so the
+        // window can't stretch on a fast paste (see SetMultiLineMode).
+        private readonly FrameworkElement _queryBoxArea;
         // Flow's single-line search chrome, hidden while the editor is active.
         private readonly UIElement _clockPanel;
         private readonly UIElement _placeholderBox;
@@ -105,6 +108,16 @@ namespace Flow.Launcher.VimMode
                 // bottom padding clears the mode line.
                 _queryTextBox.Margin = new Thickness(0, 7, 0, 7);
                 _queryTextBox.Padding = new Thickness(GutterWidth, 6, 14, 32);
+                // Hard-cap the query-box Grid (textbox 220 + 7+7 margin = 234). The root content is a
+                // vertical StackPanel, which measures children with infinite height; under SizeToContent a
+                // fast paste can momentarily inflate the TextBox past its own MaxHeight before layout
+                // settles. Capping this plain Grid (whose MaxHeight clamp is reliable) + clipping is the
+                // deterministic ceiling the window can never exceed. Reverted on exit.
+                if (_queryBoxArea != null)
+                {
+                    _queryBoxArea.MaxHeight = 234;
+                    _queryBoxArea.ClipToBounds = true;
+                }
                 ApplyEditorChrome(true);        // also resolves _editorScrollViewer via HookEditorScroll
                 EnableEditorScrollbar(true);    // real scrollbar + viewport clamp (fixes paste-stretch)
                 // Restore the editor scratchpad and select it so typing starts over (Flow's default feel).
@@ -121,6 +134,11 @@ namespace Flow.Launcher.VimMode
                 _queryTextBox.ClearValue(FrameworkElement.MaxHeightProperty);
                 _queryTextBox.ClearValue(FrameworkElement.MarginProperty);
                 _queryTextBox.ClearValue(System.Windows.Controls.Control.PaddingProperty);
+                if (_queryBoxArea != null)
+                {
+                    _queryBoxArea.ClearValue(FrameworkElement.MaxHeightProperty);
+                    _queryBoxArea.ClearValue(UIElement.ClipToBoundsProperty);
+                }
                 EnableEditorScrollbar(false);   // restore the template's hidden scrollbar + clear the clamp
                 ApplyEditorChrome(false);
                 // Restore the single-line query and select it so typing starts over (Flow's default feel).
@@ -377,6 +395,7 @@ namespace Flow.Launcher.VimMode
             _vimModeText = mainWindow.FindName("VimModeText") as System.Windows.Controls.TextBlock;
             _vimStatusInfo = mainWindow.FindName("VimStatusInfo") as System.Windows.Controls.TextBlock;
             _vimLineGutter = mainWindow.FindName("VimLineGutter") as System.Windows.Controls.Canvas;
+            _queryBoxArea = mainWindow.FindName("QueryBoxArea") as FrameworkElement;
             _clockPanel = mainWindow.FindName("ClockPanel") as UIElement;
             _placeholderBox = mainWindow.FindName("QueryTextPlaceholderBox") as UIElement;
             _suggestionBox = mainWindow.FindName("QueryTextSuggestionBox") as UIElement;
