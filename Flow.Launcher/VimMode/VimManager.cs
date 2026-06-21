@@ -100,26 +100,22 @@ namespace Flow.Launcher.VimMode
                 _queryTextBox.TextWrapping = TextWrapping.Wrap;
                 _queryTextBox.VerticalContentAlignment = VerticalAlignment.Top;
                 // Fixed editor size (MinHeight overrides the bound single-line Height; we never write the
-                // Height DP itself, which is TwoWay-bound to the persisted single-line query-box height).
-                _queryTextBox.MinHeight = 240;
-                _queryTextBox.MaxHeight = 240;
+                // Height DP itself, which is TwoWay-bound to the persisted single-line query-box height). The
+                // real text bound is the inner viewer's explicit Height (EnableEditorScrollbar); this just
+                // gives the TextBox a strip below the viewer for the mode line.
+                _queryTextBox.MinHeight = EditorBoxHeight;
+                _queryTextBox.MaxHeight = EditorBoxHeight;
                 // Drop the query box's 16px left margin (it reserved space for the search icon) so the text
                 // sits next to the small gutter; the 14px right padding leaves room for the scrollbar.
-                // The 32px BOTTOM MARGIN reserves the mode line below the TextBox: because it's the TextBox's
-                // own margin, GetRectFromCharacterIndex (and therefore the gutter) account for it, so the
-                // text and the line-number gutter occupy the exact same region — text fills top-to-mode-line
-                // with no inset, matching the gutter. (Reserving it on the inner viewer instead made the text
-                // shorter than the gutter, so numbers showed with no text beside them.)
-                _queryTextBox.Margin = new Thickness(0, 7, 0, 32);
-                _queryTextBox.Padding = new Thickness(GutterWidth, 4, 14, 4);
-                // Hard-cap the query-box Grid (textbox 220 + 7+7 margin = 234). The root content is a
-                // vertical StackPanel, which measures children with infinite height; under SizeToContent a
-                // fast paste can momentarily inflate the TextBox past its own MaxHeight before layout
-                // settles. Capping this plain Grid (whose MaxHeight clamp is reliable) + clipping is the
-                // deterministic ceiling the window can never exceed. Reverted on exit.
+                _queryTextBox.Margin = new Thickness(0, 7, 0, 0);
+                _queryTextBox.Padding = new Thickness(GutterWidth, 2, 14, 0);
+                // Hard-cap the query-box Grid. The root content is a vertical StackPanel, which measures
+                // children with infinite height; under SizeToContent a fast paste / huge wrapped line can
+                // inflate the TextBox before layout settles. Capping this plain Grid (whose MaxHeight clamp
+                // is reliable) + clipping is the deterministic window ceiling. Reverted on exit.
                 if (_queryBoxArea != null)
                 {
-                    _queryBoxArea.MaxHeight = 279; // textbox 240 + 7 top + 32 bottom margin
+                    _queryBoxArea.MaxHeight = EditorAreaHeight;
                     _queryBoxArea.ClipToBounds = true;
                 }
                 ApplyEditorChrome(true);        // also resolves _editorScrollViewer via HookEditorScroll
@@ -177,10 +173,13 @@ namespace Flow.Launcher.VimMode
                 if (editor)
                 {
                     _editorScrollViewer.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
-                    _editorScrollViewer.MaxHeight = 240; // pin the viewport; content scrolls inside
-                    // The viewer fills the TextBox with no inset: the mode-line gap is reserved on the
-                    // TextBox's own bottom margin, so the text and the gutter (which reads
-                    // GetRectFromCharacterIndex) stay aligned and fill the same region.
+                    // EXPLICIT fixed height (not MaxHeight) so the text viewport is reliably bounded and
+                    // clipped regardless of how the TextBox tries to grow. Top-aligned so it sits at the top
+                    // of the (taller) TextBox, leaving the strip below for the mode line; ClipToBounds so a
+                    // huge wrapped line can never paint past it into the mode line / results.
+                    _editorScrollViewer.Height = EditorTextHeight;
+                    _editorScrollViewer.VerticalAlignment = VerticalAlignment.Top;
+                    _editorScrollViewer.ClipToBounds = true;
                     _editorScrollViewer.Margin = new Thickness(0);
                     // Slim, thumb-only scrollbar (scoped to this viewer only).
                     if (_mainWindow.TryFindResource("VimEditorScrollBarStyle") is Style slim)
@@ -189,7 +188,10 @@ namespace Flow.Launcher.VimMode
                 else
                 {
                     _editorScrollViewer.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden; // template default
+                    _editorScrollViewer.ClearValue(FrameworkElement.HeightProperty);
                     _editorScrollViewer.ClearValue(FrameworkElement.MaxHeightProperty);
+                    _editorScrollViewer.ClearValue(FrameworkElement.VerticalAlignmentProperty);
+                    _editorScrollViewer.ClearValue(UIElement.ClipToBoundsProperty);
                     _editorScrollViewer.ClearValue(FrameworkElement.MarginProperty);
                     _editorScrollViewer.Resources.Remove(typeof(System.Windows.Controls.Primitives.ScrollBar));
                 }
@@ -212,6 +214,13 @@ namespace Flow.Launcher.VimMode
         }
 
         private const double GutterWidth = 24;
+        // Editor sizing. The inner scroll-viewer gets an EXPLICIT fixed Height (EditorTextHeight) — not a
+        // MaxHeight — so the text viewport is reliably bounded and clipped no matter how the TextBox tries to
+        // grow (a single huge wrapped line would otherwise balloon it). The mode line lives in the strip below
+        // the viewer; the gutter is keyed off EditorTextHeight so its numbers exactly match the visible text.
+        private const double EditorTextHeight = 240;  // the fixed, clipped text viewport
+        private const double EditorBoxHeight = 280;    // TextBox height (viewer + a strip below it for the mode line)
+        private const double EditorAreaHeight = 287;   // QueryBoxArea hard cap (7px top margin + box)
 
         /// <summary>
         /// Hides Flow's single-line search chrome (clock, search icon, placeholder, suggestion) while
@@ -319,7 +328,9 @@ namespace Flow.Launcher.VimMode
             try
             {
                 string text = _queryTextBox.Text;
-                double viewHeight = _queryTextBox.ActualHeight;
+                // Match the gutter's visible range to the fixed text viewport (not the TextBox's ActualHeight,
+                // which can be taller), so numbers are drawn for exactly the lines the viewer renders.
+                double viewHeight = EditorTextHeight;
                 double marginTop = _queryTextBox.Margin.Top;
                 var fg = (Application.Current.TryFindResource("Color08B") as System.Windows.Media.Brush) ?? CreateBrush(135, 135, 135);
 
