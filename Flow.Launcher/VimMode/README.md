@@ -8,8 +8,8 @@ When off, the search bar behaves exactly as it always has.
 
 > **This is the multi-line fork.** Press `Ctrl+Enter` to turn the search box into a fixed-size, scrollable,
 > multi-line Vim editor (line numbers, mode line, and send-to-plugin on `Enter`). Every keybinding below still
-> applies; in the editor the line-wise commands act on real lines. For how the editor is built, see
-> [`docs/MULTILINE_EDITOR.md`](../../docs/MULTILINE_EDITOR.md).
+> applies; in the editor the line-wise commands act on real lines. This doc covers the **keys and behaviour**;
+> the *how and why* of the editor live in [`docs/MULTILINE_EDITOR.md`](../../docs/MULTILINE_EDITOR.md).
 
 ## Design
 
@@ -17,7 +17,7 @@ The implementation is split into three pieces so the logic stays testable:
 
 | Type | Responsibility |
 | --- | --- |
-| [`VimEngine`](VimEngine.cs) | The mode state machine (Insert / Normal / Visual / Visual Line) and the `ModeChanged` event. |
+| [`VimEngine`](VimEngine.cs) | The mode state machine (Insert / Normal / Visual / Visual Line / Visual Block) and the `ModeChanged` event. |
 | [`VimMotionEngine`](VimMotionEngine.cs) | Pure, side-effect-free caret/range math (motions, text objects, operator ranges). Fully unit-tested. |
 | [`VimManager`](VimManager.cs) | Wires the engines into the WPF `MainWindow`: key interception, the block-caret overlay, the mode indicator, and clipboard operations. Implements `IDisposable` and is torn down in `MainWindow.Dispose`. |
 
@@ -26,14 +26,16 @@ Unit tests live in [`Flow.Launcher.Test`](../../Flow.Launcher.Test) (`VimEngineT
 ## Modes
 
 - **Mode indicator** — a small, color-coded dot at the left of the search bar shows the current mode:
-  accent for **Normal**, purple for **Visual**, orange for **Visual Line**. In Insert mode the dot is hidden.
-  A dot (rather than a `NORMAL`/`VISUAL` text label) is used deliberately: it conveys the mode at a glance
-  without overlapping the query text or changing Flow Launcher's existing search-bar layout, so users who
-  never enable Vim mode see no difference. A text label could be added later if reviewers prefer one.
+  accent for **Normal**, purple for **Visual**, orange for **Visual Line**, and teal for **Visual Block**. In
+  Insert mode the dot is hidden. (In the multi-line editor the dot is hidden too; the mode line shows a text
+  label instead — `NORMAL` / `VISUAL` / `V-LINE` / `V-BLOCK` / `INSERT`.) A dot (rather than a text label) is
+  used in the search bar deliberately: it conveys the mode at a glance without overlapping the query text or
+  changing Flow Launcher's existing layout, so users who never enable Vim mode see no difference.
 - **Insert** — the default. Works exactly like the standard search bar (blinking caret).
 - **Normal** — a solid block caret; alphanumeric keys are interpreted as commands instead of text.
 - **Visual** — character-wise selection; motions extend the selection from a fixed anchor.
-- **Visual Line** — selects the whole query; operators apply to all of it.
+- **Visual Line** — line-wise selection. Outside the editor this is the whole (single-line) query; in the
+  editor it starts on the current line and `j` / `k` extend it line by line.
 - **`Esc`** — from Insert, switches to Normal. **Double-`Esc`** (within 400 ms) hides the launcher.
 - **`Ctrl`/`Alt` chords pass through untouched**, so existing Flow Launcher hotkeys are unaffected.
 
@@ -43,6 +45,7 @@ Unit tests live in [`Flow.Launcher.Test`](../../Flow.Launcher.Test) (`VimEngineT
 - `h` / `l` — move left / right
 - `j` / `k` — move down / up through the search results
 - `0` — start of the query · `^` — first non-blank · `$` — end of the query
+- `g_` — last non-blank character of the line
 
 ### Word motions
 - `w` / `W` — start of next word / WORD
@@ -66,14 +69,20 @@ Unit tests live in [`Flow.Launcher.Test`](../../Flow.Launcher.Test) (`VimEngineT
 - `x` / `X` — delete the character under / before the cursor
 - `s` / `S` — substitute the character / whole query, then enter Insert
 - `r{char}` — replace the character(s) under the cursor with `{char}`
-- `~` — toggle the case of the character under the cursor
+- `~` — toggle the case of the single character under the cursor (use `g~{motion}` for a range)
 - `Ctrl+A` / `Ctrl+X` — increment / decrement the number at or after the cursor (count-aware)
-- `gu` / `gU` — lowercase / uppercase (operator + motion, e.g. `guw`)
+- `gu` / `gU` / `g~{motion}` — lowercase / uppercase / toggle-case (operator + motion, e.g. `guw`, `g~w`)
+- `gv` — reselect the last Visual selection
 - `dd` / `cc` — delete / change the whole query (current line in the editor; `3dd` for several)
 - `D` / `C` — delete / change from the cursor to the end
+- (editor) `dj` / `dk`, `cj` / `ck`, `yj` / `yk` — operate line-wise on the current line plus the line
+  below / above (count-aware, e.g. `d2j`)
 - `J` / `gJ` — (editor) join the current line with the next, with / without a space
-- `Y` — yank the whole query · `p` — paste after the cursor
-- `u` — undo the last operation · `Ctrl+R` — redo
+- `Y` — yank from the cursor to the end of the line (like `y$`); `yy` yanks the whole line/query
+- `p` — paste after the cursor · `P` — paste before the cursor
+- `u` — undo the last operation · `Ctrl+R` — redo (both Normal mode). Vim mode uses its own operation-level
+  undo stack — an insert session (`i`/`a`/`o`…) reverts as a single `u`; see
+  [`docs/MULTILINE_EDITOR.md`](../../docs/MULTILINE_EDITOR.md).
 - Yanking (`y{motion}`, `yy`, `yj`/`yk`, `Y`, Visual `y`) briefly flashes a highlight over the copied text as confirmation.
 
 ### Operators + text objects
@@ -86,11 +95,15 @@ Use a text object after an operator (`d`, `c`, `y`, `gu`, …):
 ### Repeat & counts
 - `.` — repeat the last change (e.g. `x`, `dw`, `r{char}`, `p`).
 - `{count}` — most motions and operators take a numeric prefix: `3w`, `5x`, `2p`, `d3w` / `3dw`, `3f,`, `2;`.
+  (`0` on its own is the start-of-line motion, but once a count is already being entered it acts as a digit, so
+  `10w` moves ten words.)
 
 ### Mode switches
 - `i` / `I` — insert at the cursor / start of the query
 - `a` / `A` — insert after the cursor / at the end of the query
-- `v` / `V` / `Ctrl-V` — Visual / Visual Line / Visual Block mode
+- `o` / `O` — (editor) open a new line below / above and enter Insert
+- `v` / `V` — Visual / Visual Line mode · `Ctrl-V` — Visual Block (multi-line editor only; in Insert mode it
+  pastes — see below)
 
 ## Visual mode
 
@@ -98,7 +111,9 @@ Use a text object after an operator (`d`, `c`, `y`, `gu`, …):
 - Operators on the selection: `d` / `x` (delete), `y` (yank), `c` / `s` (change), `r{char}` (replace),
   `~` (toggle case), `gu` / `gU` (lower / upper).
 - `i` / `a` start a text object (e.g. `vi(`), `o` swaps the selection ends.
-- `v` toggles between Visual and Visual Line; `Esc` returns to Normal; `j` / `k` navigate results.
+- (editor, Visual Line) `J` — join all the selected lines (with a space, like Normal-mode `J`).
+- `v` toggles between Visual and Visual Line; `Esc` returns to Normal; `j` / `k` navigate results
+  (single-line) or extend the selection by line (editor).
 
 ## Visual Block mode (`Ctrl-V`, editor)
 
@@ -108,12 +123,13 @@ Use a text object after an operator (`d`, `c`, `y`, `gu`, …):
 - `y` yanks the block (rows joined by newlines), `d` / `x` deletes the columns, `c` changes them.
 - `Shift+I` / `Shift+A` insert before / append after the block on **every** selected row — type once on the
   top row and it's copied to the rest on `Esc`. Like Vim, `Shift+I` skips rows shorter than the column,
-  `Shift+A` pads short rows with spaces, and after `$` a `Shift+A` appends at each row's own end.
+  `Shift+A` pads short rows with spaces, and after `$` a `Shift+A` appends at each row's own end. (The typed
+  text is mirrored to the other rows only on `Esc`, and only if it contains no newline.)
 - `Ctrl-V` again or `Esc` returns to Normal. (`Ctrl-V` in Insert mode still pastes.)
 
 ## Command-line (`:`, editor)
 
-- `:w` / `:wq` / `:x` — send the buffer to the selected result (plugin); `:q` — leave the editor.
+- `:w` / `:wq` / `:x` — send the buffer to the selected result (plugin); `:q` / `:q!` — leave the editor.
 - `:s/pat/rep/[flags]` — substitute on the current line; `:%s/pat/rep/[flags]` over the whole buffer. `pat`
   is a regex (smart-case; an invalid pattern falls back to a literal match) and `rep` uses .NET syntax (`$1`
   for groups, `$&` for the whole match). Flags: `g` (every match on a line, not just the first), `i` / `I`
@@ -124,8 +140,12 @@ Use a text object after an operator (`d`, `c`, `y`, `gu`, …):
 - **Auto-pair / auto-indent** — typing `(` `[` `{` or a quote inserts the matching close (quotes skip
   apostrophes in words); `Enter` carries the line's indent. Both toggle in settings.
 - **Crash-safe drafts** — the editor buffer is autosaved and restored after a crash, reboot, or restart.
-- **Settings** — General → *Enable Advanced Vim Mode* expander: enable the editor, set its height in lines,
-  and toggle auto-pair / auto-indent.
+- **Open in external editor** (`Ctrl+Shift+E`) — hand the buffer off to your OS default text editor (for
+  content that has outgrown the box); this clears the scratchpad and hides Flow.
+- **Settings** — General → *Enable Advanced Vim Mode* expander: the *Vim multi-line editor* toggle is **on by
+  default once Vim mode is enabled**, so `Ctrl+Enter` opens the editor immediately — turn it off to keep
+  single-line Vim only. The same expander sets the editor height in lines (3–20, default 9) and toggles
+  auto-pair / auto-indent.
 
 ## Known limitations
 
@@ -135,6 +155,15 @@ Use a text object after an operator (`d`, `c`, `y`, `gu`, …):
 - **Dot-repeat of inserts** — `.` replays the operator/motion of the last change but not text typed in
   Insert mode, so `cwfoo<Esc>.` re-deletes a word without re-typing `foo`.
 - **Single line vs editor** — outside the multi-line editor the box is a single line, so line-wise commands
-  (`dd`, `cc`, `V`, `0`/`$`) act on the whole query and `gg`/`G` are not bound. Inside the editor
-  (`Ctrl+Enter`) they act on real lines, and `gg`/`G`, `o`/`O`, and line-wise `dj`/`dk` are bound. See
+  (`dd`, `cc`, `V`, `0`/`$`) act on the whole query (char-wise) and `gg`/`G` are not bound. Inside the editor
+  (`Ctrl+Enter`) they act on real lines, and `gg`/`G` (jump to the first / last line), `o`/`O`, and line-wise
+  `dj`/`dk` are bound. With a count, `{count}gg` / `{count}G` jump to a specific line (e.g. `5G`, `5gg`). See
   [`docs/MULTILINE_EDITOR.md`](../../docs/MULTILINE_EDITOR.md).
+- **Line-aware paste (editor only)** — in the editor, after a *line-wise* yank/delete (`dd`/`yy`/`cc`,
+  `dj`/`dk`/`yj`/`yk`, or a Visual-Line `y`/`d`) `p`/`P` insert whole line(s) below/above the current line;
+  after a char-wise one they paste inline after/before the caret. If the clipboard has changed since (e.g. you
+  copied from another app), paste falls back to char-wise. In single-line mode `dd`/`yy`/Visual-Line are
+  char-wise, so `p` always pastes inline there.
+- **One result row in the editor** — while the editor is open the results list is collapsed to a single row to
+  keep the window compact, so only the top match is visible. After `Esc` (Normal/Visual mode), `Ctrl+J` /
+  `Ctrl+K` still move the (hidden) selection and `Enter` sends the buffer to whichever result is selected.

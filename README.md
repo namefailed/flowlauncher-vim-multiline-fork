@@ -44,7 +44,9 @@ With Vim mode disabled in settings, this build behaves exactly like upstream Flo
 2. Download **`Flow-Launcher-Setup.exe`** (installer) or the portable zip.
 3. Run it. Windows SmartScreen may warn that the build is unsigned — these releases are built by GitHub Actions
    from this repo's source; choose **More info → Run anyway** if you trust it.
-4. Open Flow Launcher settings and enable **General → "Enable Advanced Vim Mode"**.
+4. Open Flow Launcher settings and enable **General → "Enable Advanced Vim Mode"**. The multi-line editor is
+   **on by default** once Vim mode is enabled; you can disable it or change its height (visible lines, default
+   9) in the same settings expander.
 5. Open the launcher and press **`Ctrl+Enter`** to drop into the multi-line editor.
 
 > Builds are produced by the [Fork Release workflow](.github/workflows/fork-release.yml) on every push to
