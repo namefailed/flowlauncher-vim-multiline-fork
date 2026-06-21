@@ -101,8 +101,8 @@ namespace Flow.Launcher.VimMode
                 _queryTextBox.VerticalContentAlignment = VerticalAlignment.Top;
                 // Fixed editor size (MinHeight overrides the bound single-line Height; we never write the
                 // Height DP itself, which is TwoWay-bound to the persisted single-line query-box height).
-                _queryTextBox.MinHeight = 220;
-                _queryTextBox.MaxHeight = 220;
+                _queryTextBox.MinHeight = 272;
+                _queryTextBox.MaxHeight = 272;
                 // Drop the query box's 16px left margin (it reserved space for the search icon) so the text
                 // sits next to the small gutter; the 14px right padding leaves room for the scrollbar; the
                 // bottom padding clears the mode line.
@@ -117,7 +117,7 @@ namespace Flow.Launcher.VimMode
                 // deterministic ceiling the window can never exceed. Reverted on exit.
                 if (_queryBoxArea != null)
                 {
-                    _queryBoxArea.MaxHeight = 234;
+                    _queryBoxArea.MaxHeight = 286; // textbox 272 + 7+7 margin
                     _queryBoxArea.ClipToBounds = true;
                 }
                 ApplyEditorChrome(true);        // also resolves _editorScrollViewer via HookEditorScroll
@@ -175,7 +175,7 @@ namespace Flow.Launcher.VimMode
                 if (editor)
                 {
                     _editorScrollViewer.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
-                    _editorScrollViewer.MaxHeight = 220; // pin the viewport; content scrolls inside
+                    _editorScrollViewer.MaxHeight = 272; // pin the viewport; content scrolls inside
                     // Shrink the scrolling viewport so it ends ABOVE the mode line (a persistent inset the
                     // TextBox's bottom Padding can't provide once scrolled). This keeps the bottom line from
                     // sliding under the mode line, and makes scroll-to-caret use the real visible height. The
