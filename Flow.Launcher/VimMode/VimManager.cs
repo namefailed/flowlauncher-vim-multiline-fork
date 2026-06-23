@@ -793,8 +793,8 @@ namespace Flow.Launcher.VimMode
                         }
                         if (_vimEngine.CurrentMode != VimModeType.Insert)
                         {
-                            _queryTextBox.SelectionLength = 0;
                             _vimEngine.SwitchToInsert();
+                            _queryTextBox.SelectAll(); // select the restored text so the first keystroke replaces it (match Insert / Ctrl+Enter)
                         }
                         UpdateStatusBar();
                     }));
