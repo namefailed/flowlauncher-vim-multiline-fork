@@ -99,7 +99,15 @@ namespace Flow.Launcher.VimMode
         private int _lastChangeLen = 0;   // chars affected by last change (for . repeat)
         private char _lastReplaceChar = '\0'; // char used in last r{char} (for . repeat)
         private bool _multiLineMode;      // true when the query box is the multi-line editor
-        private string _multiLineBuffer = ""; // the multi-line editor's text; preserved across hide/show and mode switches
+        // Three editor scratchpads: left / main / right, cycled with Ctrl+H / Ctrl+L. _multiLineBuffer is a
+        // proxy for the active slot, so all the existing buffer code transparently acts on the current one.
+        private readonly string[] _buffers = { "", "", "" };
+        private int _bufIndex = 1; // start on the main (middle) buffer
+        private string _multiLineBuffer
+        {
+            get => _buffers[_bufIndex];
+            set => _buffers[_bufIndex] = value ?? "";
+        }
         private string _singleLineBuffer = ""; // the normal single-line Flow query; preserved while editing in multi-line
         // Crash/restart-safe draft of the editor buffer: debounce-written to disk while editing, restored on
         // the first editor open of a fresh process so a crash or reboot can't lose a half-written entry.
@@ -207,39 +215,79 @@ namespace Flow.Launcher.VimMode
             _draftTimer.Start();
         }
 
-        /// <summary>Writes the (LF-normalized) draft to disk. Safe to call from any thread.</summary>
-        private void SaveDraft(string text)
+        /// <summary>
+        /// Writes all three editor buffers (and the active index) to disk, LF-normalized and NUL-delimited
+        /// (NUL can't appear in typed text). <paramref name="currentText"/> is the live text of the active
+        /// buffer. Safe to call from any thread.
+        /// </summary>
+        private void SaveDraft(string currentText)
         {
             try
             {
                 lock (_draftLock)
                 {
+                    _buffers[_bufIndex] = currentText ?? "";
+                    var sb = new System.Text.StringBuilder();
+                    sb.Append(_bufIndex);
+                    foreach (var b in _buffers) { sb.Append('\0'); sb.Append(NormalizeLf(b) ?? ""); }
                     var dir = System.IO.Path.GetDirectoryName(DraftPath);
                     if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir);
-                    System.IO.File.WriteAllText(DraftPath, NormalizeLf(text) ?? "");
+                    System.IO.File.WriteAllText(DraftPath, sb.ToString());
                 }
             }
             catch (Exception ex) { Flow.Launcher.Infrastructure.Logger.Log.Exception("VimManager", "Draft save failed", ex); }
         }
 
         /// <summary>
-        /// On the first editor open of a fresh process, if there's no in-memory buffer yet but a saved draft
-        /// exists, load it — recovering a half-written entry left behind by a crash, reboot, or restart.
+        /// On the first editor open of a fresh process, if no buffer is populated yet but a saved draft exists,
+        /// load all three buffers — recovering half-written entries left behind by a crash, reboot, or restart.
         /// </summary>
         private void RestoreDraftIfAny()
         {
             if (_draftRestored) return;
             _draftRestored = true;
-            if (!string.IsNullOrEmpty(_multiLineBuffer)) return;
+            foreach (var b in _buffers) if (!string.IsNullOrEmpty(b)) return; // already have content
             try
             {
-                if (System.IO.File.Exists(DraftPath))
+                if (!System.IO.File.Exists(DraftPath)) return;
+                var blob = System.IO.File.ReadAllText(DraftPath);
+                var parts = blob.Split('\0');
+                if (parts.Length == _buffers.Length + 1 && int.TryParse(parts[0], out int idx))
                 {
-                    var draft = NormalizeLf(System.IO.File.ReadAllText(DraftPath));
-                    if (!string.IsNullOrEmpty(draft)) _multiLineBuffer = draft;
+                    for (int i = 0; i < _buffers.Length; i++) _buffers[i] = NormalizeLf(parts[i + 1]) ?? "";
+                    _bufIndex = System.Math.Max(0, System.Math.Min(idx, _buffers.Length - 1));
+                }
+                else // legacy single-buffer draft: load it into the main slot
+                {
+                    _bufIndex = 1;
+                    _buffers[1] = NormalizeLf(blob) ?? "";
                 }
             }
             catch (Exception ex) { Flow.Launcher.Infrastructure.Logger.Log.Exception("VimManager", "Draft restore failed", ex); }
+        }
+
+        /// <summary>Ctrl+H / Ctrl+L: stash the live text into the active buffer, move to the previous/next of
+        /// the three slots, and load it. Stays in the current mode (no select-all) so you keep editing.</summary>
+        private void SwitchBuffer(int delta)
+        {
+            if (!_multiLineMode) return;
+            _buffers[_bufIndex] = _queryTextBox.Text;
+            _bufIndex = (_bufIndex + delta + _buffers.Length) % _buffers.Length;
+            // Set directly (not SetText) and reset undo so 'u' can't pull one buffer's text into another.
+            _queryTextBox.SetCurrentValue(System.Windows.Controls.TextBox.TextProperty, _buffers[_bufIndex]);
+            _undoStack.Clear();
+            _redoStack.Clear();
+            _queryTextBox.CaretIndex = _queryTextBox.Text.Length;
+            SaveDraft(_queryTextBox.Text);
+            UpdateStatusBar();
+        }
+
+        /// <summary>Ctrl+X: clear the active buffer (undoable via u, since it routes through SetText).</summary>
+        private void ClearBuffer()
+        {
+            if (!_multiLineMode) return;
+            SetText("");
+            SaveDraft("");
         }
 
         /// <summary>
@@ -533,7 +581,7 @@ namespace Flow.Launcher.VimMode
                 VimModeType.VisualBlock => "V-BLOCK",
                 _ => "INSERT"
             };
-            if (_vimStatusInfo != null) _vimStatusInfo.Text = $"Ln {line}, Col {col}     {text.Length} chars";
+            if (_vimStatusInfo != null) _vimStatusInfo.Text = $"buf {_bufIndex + 1}/{_buffers.Length}     Ln {line}, Col {col}     {text.Length} chars";
         }
 
         // Vim-style operation-level undo/redo stacks
@@ -1017,6 +1065,16 @@ namespace Flow.Launcher.VimMode
                 else EnterVisualBlock();
                 e.Handled = true;
                 return true;
+            }
+
+            // Ctrl+H / Ctrl+L: cycle the three editor scratchpads (left / main / right). Ctrl+X: clear the
+            // active one. Works in any editor mode (Ctrl+H here overrides Insert-mode backspace — use the
+            // Backspace key for that).
+            if (_multiLineMode && modifiers.HasFlag(ModifierKeys.Control) && !modifiers.HasFlag(ModifierKeys.Alt) && !modifiers.HasFlag(ModifierKeys.Shift))
+            {
+                if (e.Key == Key.L) { SwitchBuffer(+1); e.Handled = true; return true; }
+                if (e.Key == Key.H) { SwitchBuffer(-1); e.Handled = true; return true; }
+                if (e.Key == Key.X) { ClearBuffer(); e.Handled = true; return true; }
             }
 
             if (modifiers.HasFlag(ModifierKeys.Control) || modifiers.HasFlag(ModifierKeys.Alt))
