@@ -137,9 +137,14 @@ Use a text object after an operator (`d`, `c`, `y`, `gu`, …):
 
 ## Editor conveniences
 
+- **Three buffers** — the editor has three scratchpads (left / main / right). `Ctrl+L` cycles to the next,
+  `Ctrl+H` to the previous; the mode line shows `buf n/3`. Each keeps its own text; switching keeps your mode
+  and leaves the caret at the end (no select-all), so you just keep editing. `Ctrl+X` clears the active buffer
+  (undoable with `u`). *(In the editor `Ctrl+H` swaps buffers rather than acting as Insert-mode backspace — use
+  the `Backspace` key — and `Ctrl+X` clears rather than decrementing a number.)*
 - **Auto-pair / auto-indent** — typing `(` `[` `{` or a quote inserts the matching close (quotes skip
   apostrophes in words); `Enter` carries the line's indent. Both toggle in settings.
-- **Crash-safe drafts** — the editor buffer is autosaved and restored after a crash, reboot, or restart.
+- **Crash-safe drafts** — all three editor buffers are autosaved and restored after a crash, reboot, or restart.
 - **Open in external editor** (`Ctrl+Shift+E`) — hand the buffer off to your OS default text editor (for
   content that has outgrown the box); this clears the scratchpad and hides Flow.
 - **Settings** — General → *Enable Advanced Vim Mode* expander: the *Vim multi-line editor* toggle is **on by

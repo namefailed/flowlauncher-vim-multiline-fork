@@ -138,15 +138,21 @@ On **exit** (`SetMultiLineMode(false)`) every one of those is reverted: `Accepts
 **Problem solved:** toggling `Ctrl+Enter` used to lose whatever you'd typed on the other side, because both
 modes share one `TextBox`.
 
-**Design:** two string fields hold each mode's text independently:
+**Design:** separate string state holds each mode's text independently:
 
 - `_singleLineBuffer` — the normal Flow search query.
-- `_multiLineBuffer` — the editor scratchpad.
+- `_buffers` (3 slots: left / main / right) — the editor scratchpads, with `_bufIndex` for the active one.
+  `_multiLineBuffer` is a **property** that proxies `_buffers[_bufIndex]`, so all the buffer/hide-show/draft
+  code below acts on the active editor buffer transparently. `Ctrl+L` / `Ctrl+H` (`SwitchBuffer`) cycle the
+  slots; the mode line shows `buf n/3`. `Ctrl+X` (`ClearBuffer`) empties the active slot (via `SetText`, so
+  `u` un-clears). Switching sets the text directly (not `SetText`) and **clears the undo/redo stacks**, so `u`
+  can't drag one buffer's text into another — undo doesn't cross a buffer switch.
 
 On every `SetMultiLineMode` switch we **stash the outgoing mode's text** into its buffer, then **restore the
 incoming mode's buffer** via `SetText(...)`, then `SelectAll()`. The select-all mimics Flow's own
 "remember the last query but pre-select it" behaviour: the text is there if you want it, but the first
-keystroke replaces it — an easy "start over".
+keystroke replaces it — an easy "start over". (`SwitchBuffer`, by contrast, does *not* select-all — you keep
+editing the buffer you moved to.)
 
 Persistence rules:
 
@@ -441,11 +447,14 @@ Layered on top of the core editor; all live in `VimManager.cs` unless noted. Thi
 
 ### 13.1 Crash-safe drafts
 
-`ScheduleDraftSave` debounce-writes (≈1s after typing stops, via a `DispatcherTimer`) the LF-normalised buffer
-to `%APPDATA%/FlowLauncher/vim-scratch-draft.txt`; `SaveDraft` does the locked, LF-normalised write and is safe
-to call from any thread. `RestoreDraftIfAny` reloads the draft on the first editor open of a fresh process —
-only when there's no in-memory buffer yet (`_draftRestored` makes it run once) — so a crash/reboot can't lose a
-half-written entry. The draft is cleared after a `Ctrl+Shift+E` handoff (§11); a normal send keeps it (§9, §4).
+`ScheduleDraftSave` debounce-writes (≈1s after typing stops, via a `DispatcherTimer`) to
+`%APPDATA%/FlowLauncher/vim-scratch-draft.txt`; `SaveDraft` does the locked, LF-normalised write and is safe to
+call from any thread. It persists **all three buffers** (§4) plus the active index, NUL-delimited
+(`index\0buf0\0buf1\0buf2`) — NUL can't appear in typed text, so it's a safe separator. `RestoreDraftIfAny`
+reloads them on the first editor open of a fresh process — only when no buffer has content yet (`_draftRestored`
+makes it run once) — so a crash/reboot can't lose a half-written entry; a legacy single-string draft (no NULs)
+is migrated into the main slot. The active buffer's draft is cleared after a `Ctrl+Shift+E` handoff (§11); a
+normal send keeps it (§9, §4).
 
 ### 13.2 Auto-indent & auto-pair
 
