@@ -1106,7 +1106,7 @@ namespace Flow.Launcher.VimMode
         {
             var modifiers = e.KeyboardDevice.Modifiers;
 
-            if (_vimEngine.CurrentMode == VimModeType.Normal || _vimEngine.CurrentMode == VimModeType.Visual || _vimEngine.CurrentMode == VimModeType.VisualLine)
+            if (_vimEngine.CurrentMode == VimModeType.Normal || _vimEngine.CurrentMode == VimModeType.Visual || _vimEngine.CurrentMode == VimModeType.VisualLine || _vimEngine.CurrentMode == VimModeType.VisualBlock)
             {
                 if (_gPending)
                 {
@@ -1652,6 +1652,11 @@ namespace Flow.Launcher.VimMode
                                 _vimEngine.SwitchToNormal();
                             }
                             return true;
+                        case Key.U:
+                            // u / U -> lower / upper the selection (gu / gU also work via the g-prefix).
+                            ChangeSelectionCase(toUpper: modifiers.HasFlag(ModifierKeys.Shift));
+                            _vimEngine.SwitchToNormal();
+                            return true;
                         case Key.J:
                             if (_multiLineMode)
                                 ExecuteVisualMotion(VimMotionEngine.MoveDown(_queryTextBox.Text, _visualCaret));
@@ -1742,6 +1747,11 @@ namespace Flow.Launcher.VimMode
                                 _queryTextBox.SelectionLength = 0;
                                 _vimEngine.SwitchToNormal();
                             }
+                            return true;
+                        case Key.U:
+                            // u / U -> lower / upper the selected lines (gu / gU also work via the g-prefix).
+                            ChangeSelectionCase(toUpper: modifiers.HasFlag(ModifierKeys.Shift));
+                            _vimEngine.SwitchToNormal();
                             return true;
                         case Key.J:
                             if (_multiLineMode)
@@ -1843,6 +1853,14 @@ namespace Flow.Launcher.VimMode
                         case Key.A when modifiers.HasFlag(ModifierKeys.Shift): // A -> append after the block on all rows
                             BlockInsert(atRight: true);
                             return true;
+                        case Key.G when modifiers.HasFlag(ModifierKeys.Shift): // G -> extend block to the last line
+                            BlockToLine(_count > 0
+                                ? StartOfLineNumber(_queryTextBox.Text, GetCount())
+                                : VimMotionEngine.GetLineStart(_queryTextBox.Text, _queryTextBox.Text.Length));
+                            return true;
+                        case Key.G: // gg via the prefix -> extend block to the first line
+                            _gPending = true;
+                            return true;
                         default:
                             return true;
                     }
@@ -1924,12 +1942,25 @@ namespace Flow.Launcher.VimMode
                             return true;
                     }
                 case VimModeType.VisualLine:
-                    // gg -> extend the line selection to the first line (or {count}gg to a line).
                     if (e.Key == Key.G && modifiers == ModifierKeys.None && _multiLineMode)
                     {
+                        // gg -> extend the line selection to the first line (or {count}gg to a line).
                         int line = _count > 0 ? GetCount() : 0;
                         _visualCaret = line >= 1 ? StartOfLineNumber(_queryTextBox.Text, line) : 0;
                         UpdateVisualLineSelection();
+                    }
+                    else if (e.Key == Key.U)
+                    {
+                        // gu / gU -> lower / upper the selected lines.
+                        ChangeSelectionCase(toUpper: modifiers.HasFlag(ModifierKeys.Shift));
+                        _vimEngine.SwitchToNormal();
+                    }
+                    return true;
+                case VimModeType.VisualBlock:
+                    if (e.Key == Key.G && modifiers == ModifierKeys.None)
+                    {
+                        // gg -> extend the block to the first line (or {count}gg to a line).
+                        BlockToLine(_count > 0 ? StartOfLineNumber(_queryTextBox.Text, GetCount()) : 0);
                     }
                     return true;
                 default:
@@ -2865,6 +2896,17 @@ namespace Flow.Launcher.VimMode
             _visualCaret = Math.Max(0, Math.Min(newCaret, _queryTextBox.Text.Length));
             UpdateCaretPosition();
             UpdateBlockSelection();
+        }
+
+        /// <summary>Moves the block's active corner to <paramref name="lineStart"/>, keeping the current column
+        /// (for gg/G — vertical block extension). Cancels a $-block.</summary>
+        private void BlockToLine(int lineStart)
+        {
+            string t = _queryTextBox.Text;
+            int col = _visualCaret - VimMotionEngine.GetLineStart(t, _visualCaret);
+            int len = VimMotionEngine.GetLineEnd(t, lineStart) - lineStart;
+            _blockToEol = false;
+            BlockMove(lineStart + Math.Min(col, len));
         }
 
         /// <summary>Yanks the column block (rows joined by \n) to the clipboard, then returns to Normal.</summary>
