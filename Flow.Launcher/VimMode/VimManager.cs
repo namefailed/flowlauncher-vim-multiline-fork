@@ -1106,7 +1106,7 @@ namespace Flow.Launcher.VimMode
         {
             var modifiers = e.KeyboardDevice.Modifiers;
 
-            if (_vimEngine.CurrentMode == VimModeType.Normal || _vimEngine.CurrentMode == VimModeType.Visual)
+            if (_vimEngine.CurrentMode == VimModeType.Normal || _vimEngine.CurrentMode == VimModeType.Visual || _vimEngine.CurrentMode == VimModeType.VisualLine)
             {
                 if (_gPending)
                 {
@@ -1500,8 +1500,18 @@ namespace Flow.Launcher.VimMode
                         case Key.O when modifiers == ModifierKeys.None:
                             SwapVisualEnds();
                             return true;
+                        case Key.G when modifiers.HasFlag(ModifierKeys.Shift):
+                            // Shift+G extends the selection to the last line (or {count}G to a line).
+                            if (_multiLineMode)
+                            {
+                                int line = _count > 0 ? GetCount() : 0;
+                                ExecuteVisualMotion(line >= 1
+                                    ? StartOfLineNumber(_queryTextBox.Text, line)
+                                    : VimMotionEngine.GetLineStart(_queryTextBox.Text, _queryTextBox.Text.Length));
+                            }
+                            return true;
                         case Key.G when modifiers == ModifierKeys.None:
-                            // 'g' prefix in Visual mode (e.g. gu / gU on the selection).
+                            // 'g' prefix in Visual mode (e.g. gg / gu / gU on the selection).
                             _gPending = true;
                             return true;
                         case Key.H:
@@ -1749,6 +1759,25 @@ namespace Flow.Launcher.VimMode
                             }
                             else _viewModel.SelectPrevItemCommand.Execute(null);
                             return true;
+                        case Key.G:
+                            // Shift+G extends the selection to the last line (or {count}G to a line); plain 'g'
+                            // is the prefix for 'gg' (extend to the first line), dispatched via HandleGKey.
+                            if (modifiers.HasFlag(ModifierKeys.Shift))
+                            {
+                                if (_multiLineMode)
+                                {
+                                    int line = _count > 0 ? GetCount() : 0;
+                                    _visualCaret = line >= 1
+                                        ? StartOfLineNumber(_queryTextBox.Text, line)
+                                        : VimMotionEngine.GetLineStart(_queryTextBox.Text, _queryTextBox.Text.Length);
+                                    UpdateVisualLineSelection();
+                                }
+                            }
+                            else if (modifiers == ModifierKeys.None)
+                            {
+                                _gPending = true;
+                            }
+                            return true;
                         default:
                             return true;
                     }
@@ -1870,6 +1899,13 @@ namespace Flow.Launcher.VimMode
                 case VimModeType.Visual:
                     switch (e.Key)
                     {
+                        case Key.G when modifiers == ModifierKeys.None && _multiLineMode:
+                            // gg -> extend the selection to the first line (or {count}gg to a line).
+                            {
+                                int line = _count > 0 ? GetCount() : 0;
+                                ExecuteVisualMotion(line >= 1 ? StartOfLineNumber(_queryTextBox.Text, line) : 0);
+                            }
+                            return true;
                         case Key.U when modifiers == ModifierKeys.None:
                             ChangeSelectionCase(toUpper: false);
                             return true;
@@ -1887,6 +1923,15 @@ namespace Flow.Launcher.VimMode
                         default:
                             return true;
                     }
+                case VimModeType.VisualLine:
+                    // gg -> extend the line selection to the first line (or {count}gg to a line).
+                    if (e.Key == Key.G && modifiers == ModifierKeys.None && _multiLineMode)
+                    {
+                        int line = _count > 0 ? GetCount() : 0;
+                        _visualCaret = line >= 1 ? StartOfLineNumber(_queryTextBox.Text, line) : 0;
+                        UpdateVisualLineSelection();
+                    }
+                    return true;
                 default:
                     return true;
             }
